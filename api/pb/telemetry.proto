@@ -1,0 +1,118 @@
+syntax = "proto3";
+
+package telemetry.v1;
+
+option go_package = "telemetry/api/pb;pb";
+
+import "internal/agent/modules/cpu/pb/cpu.proto";
+import "internal/agent/modules/gpu/pb/gpu.proto";
+import "internal/agent/modules/memory/pb/memory.proto";
+import "internal/agent/modules/storage/pb/storage.proto";
+import "internal/agent/modules/network/pb/network.proto";
+import "internal/agent/modules/process/pb/process.proto";
+
+message BasicInfo {
+  string hostname = 1;
+  repeated string ips = 2;
+  string os = 3;
+  string kernel = 4;
+  string arch = 5;
+  string machine_id = 6;
+  string boot_id = 7;
+  string hardware_model = 8;
+  string hardware_vendor = 9;
+}
+
+message ModuleRegistration {
+  string name = 1;
+  oneof metadata {
+    telemetry.module.cpu.v1.ModuleRegistration cpu = 10;
+    telemetry.module.gpu.v1.ModuleRegistration gpu = 11;
+    telemetry.module.memory.v1.ModuleRegistration memory = 12;
+    telemetry.module.storage.v1.ModuleRegistration storage = 13;
+    telemetry.module.network.v1.ModuleRegistration network = 14;
+    telemetry.module.process.v1.ModuleRegistration process = 15;
+  }
+}
+
+message Registration {
+  string node_id = 1;
+  BasicInfo basic = 2;
+  repeated ModuleRegistration modules = 3;
+  int64 at_unix_nano = 4;
+}
+
+message Heartbeat {
+  string node_id = 1;
+  int64 at_unix_nano = 2;
+}
+
+message MetricSample {
+  string category = 1;
+  int64 at_unix_nano = 2;
+
+  oneof payload {
+    telemetry.module.cpu.v1.UltraMetrics cpu_ultra_metrics = 10;
+    telemetry.module.cpu.v1.MediumMetrics cpu_medium_metrics = 11;
+    telemetry.module.gpu.v1.FastMetrics gpu_fast_metrics = 12;
+    telemetry.module.memory.v1.Metrics memory_metrics = 13;
+    telemetry.module.storage.v1.Metrics storage_metrics = 14;
+    telemetry.module.network.v1.Metrics network_metrics = 15;
+    telemetry.module.process.v1.Metrics process_metrics = 16;
+  }
+}
+
+message MetricsBatch {
+  string node_id = 1;
+  repeated MetricSample samples = 2;
+  int64 sent_at_unix_nano = 3;
+}
+
+message Command {
+  string id = 1;
+  string node_id = 2;
+  string type = 3;
+  int64 issued_at_unix_nano = 4;
+
+  oneof payload {
+    telemetry.module.cpu.v1.ScalingRangeCommand cpu_scaling_range = 10;
+    telemetry.module.cpu.v1.GovernorCommand cpu_governor = 11;
+    telemetry.module.cpu.v1.UncoreRangeCommand cpu_uncore_range = 12;
+    telemetry.module.cpu.v1.PowerCapCommand cpu_power_cap = 13;
+    telemetry.module.gpu.v1.ClockRangeCommand gpu_clock_range = 14;
+    telemetry.module.gpu.v1.PowerCapCommand gpu_power_cap = 15;
+    telemetry.module.process.v1.SignalCommand process_signal = 16;
+  }
+}
+
+message CommandResult {
+  string command_id = 1;
+  string node_id = 2;
+  string type = 3;
+  bool success = 4;
+  string error = 5;
+  int64 finished_at_unix_nano = 6;
+}
+
+message ServerAck {
+  string node_id = 1;
+  int64 at_unix_nano = 2;
+}
+
+message AgentMessage {
+  string kind = 1;
+  Registration registration = 2;
+  MetricsBatch metrics = 3;
+  CommandResult result = 4;
+  Heartbeat heartbeat = 5;
+}
+
+message ServerMessage {
+  string kind = 1;
+  Command command = 2;
+  ServerAck ack = 3;
+}
+
+service TelemetryService {
+  rpc StreamTelemetry(stream AgentMessage) returns (stream ServerMessage);
+}

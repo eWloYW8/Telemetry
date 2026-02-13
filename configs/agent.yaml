@@ -1,0 +1,22 @@
+node_id: ""
+server_address: "127.0.0.1:9443"
+reconnect_backoff: 3s
+send_queue_size: 4096
+control_timeout: 10s
+report:
+  intervals:
+    cpu_ultra_fast: 100ms
+    cpu_medium: 1s
+    gpu_fast: 100ms
+    memory: 1s
+    storage: 5s
+    network: 5s
+    process: 5s
+  heartbeat: 2s
+  batch_flush: 100ms
+  max_per_batch: 64
+tls:
+  ca_file: "certs/ca.crt"
+  cert_file: "certs/agent.crt"
+  key_file: "certs/agent.key"
+  server_name_override: ""

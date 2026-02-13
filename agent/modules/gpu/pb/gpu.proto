@@ -1,0 +1,62 @@
+syntax = "proto3";
+
+package telemetry.module.gpu.v1;
+
+option go_package = "telemetry/agent/modules/gpu/pb;gpupb";
+
+message CollectorSpec {
+  string category = 1;
+  string interval = 2;
+}
+
+message ControllerSpec {
+  string type = 1;
+}
+
+message StaticInfo {
+  int32 index = 1;
+  string name = 2;
+  string uuid = 3;
+  uint64 memory_total_bytes = 4;
+  uint32 power_min_milliwatt = 5;
+  uint32 power_max_milliwatt = 6;
+}
+
+message ModuleRegistration {
+  repeated StaticInfo static = 1;
+  repeated CollectorSpec collectors = 2;
+  repeated ControllerSpec controllers = 3;
+}
+
+message DeviceFastMetrics {
+  int32 index = 1;
+  uint32 utilization_gpu = 2;
+  uint32 utilization_mem = 3;
+  uint64 memory_used_bytes = 4;
+  uint32 temperature_c = 5;
+  uint32 power_usage_milliwatt = 6;
+  uint32 graphics_clock_mhz = 7;
+  uint32 memory_clock_mhz = 8;
+  uint32 sm_clock_min_mhz = 9;
+  uint32 sm_clock_max_mhz = 10;
+  uint32 mem_clock_min_mhz = 11;
+  uint32 mem_clock_max_mhz = 12;
+  uint32 power_limit_milliwatt = 13;
+}
+
+message FastMetrics {
+  repeated DeviceFastMetrics devices = 1;
+}
+
+message ClockRangeCommand {
+  int32 gpu_index = 1;
+  uint32 sm_min_mhz = 2;
+  uint32 sm_max_mhz = 3;
+  uint32 mem_min_mhz = 4;
+  uint32 mem_max_mhz = 5;
+}
+
+message PowerCapCommand {
+  int32 gpu_index = 1;
+  uint32 milliwatt = 2;
+}

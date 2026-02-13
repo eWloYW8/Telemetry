@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package telemetry.module.process.v1;
+
+option go_package = "telemetry/agent/modules/process/pb;processpb";
+
+message CollectorSpec {
+  string category = 1;
+  string interval = 2;
+}
+
+message ControllerSpec {
+  string type = 1;
+}
+
+message ModuleRegistration {
+  repeated CollectorSpec collectors = 1;
+  repeated ControllerSpec controllers = 2;
+}
+
+message Info {
+  int32 pid = 1;
+  int32 ppid = 2;
+  string user = 3;
+  string state = 4;
+  double cpu_percent = 5;
+  uint64 memory_bytes = 6;
+  string command = 7;
+}
+
+message Metrics {
+  repeated Info processes = 1;
+}
+
+message SignalCommand {
+  int32 pid = 1;
+  int32 signal = 2;
+}

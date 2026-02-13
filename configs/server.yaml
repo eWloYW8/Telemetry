@@ -1,0 +1,14 @@
+grpc_listen: "0.0.0.0:9443"
+http_listen: "0.0.0.0:9080"
+retention: 24h
+max_samples_per_node: 500000
+ingest_queue_size: 16384
+per_node_queue_size: 4096
+command_timeout: 15s
+http_read_timeout: 10s
+http_write_timeout: 15s
+http_idle_timeout: 30s
+tls:
+  ca_file: "certs/ca.crt"
+  cert_file: "certs/server.crt"
+  key_file: "certs/server.key"
