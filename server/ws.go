@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -44,6 +45,9 @@ type wsHub struct {
 	unregister chan *wsClient
 	broadcast  chan wsBroadcast
 	clients    map[*wsClient]struct{}
+
+	droppedBroadcast   atomic.Uint64
+	droppedSlowClients atomic.Uint64
 }
 
 func newWSHub(logger zerolog.Logger) *wsHub {
@@ -84,7 +88,7 @@ func (h *wsHub) Run(ctx context.Context) {
 					delete(h.clients, c)
 					close(c.send)
 					_ = c.conn.Close()
-					h.log.Warn().Str("remote_addr", c.remoteAddr).Msg("ws client is too slow, dropped")
+					h.droppedSlowClients.Add(1)
 				}
 			}
 		}
@@ -115,9 +119,16 @@ func (h *wsHub) PublishMetrics(nodeID string, samples []api.MetricSample) {
 		select {
 		case h.broadcast <- wsBroadcast{nodeID: nodeID, category: string(sample.Category), payload: payload}:
 		default:
-			h.log.Warn().Str("node_id", nodeID).Msg("ws broadcast queue full, dropping realtime sample")
+			h.droppedBroadcast.Add(1)
 		}
 	}
+}
+
+func (h *wsHub) SwapDropStats() (droppedBroadcast uint64, droppedSlowClients uint64) {
+	if h == nil {
+		return 0, 0
+	}
+	return h.droppedBroadcast.Swap(0), h.droppedSlowClients.Swap(0)
 }
 
 type wsClient struct {
@@ -239,6 +250,10 @@ func (s *Server) handleWSMetrics(w http.ResponseWriter, r *http.Request) {
 
 	s.wsHub.Register(client)
 	defer s.wsHub.Unregister(client)
+	s.log.Info().
+		Str("remote_addr", r.RemoteAddr).
+		Int("queue", queueSize).
+		Msg("ws client connected")
 
 	welcome, _ := proto.Marshal(&pb.WSOutgoingMessage{
 		Type: "welcome",
@@ -257,6 +272,7 @@ func (s *Server) handleWSMetrics(w http.ResponseWriter, r *http.Request) {
 	if err := client.readPump(); err != nil && !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 		s.log.Debug().Err(err).Str("remote_addr", r.RemoteAddr).Msg("ws client closed")
 	}
+	s.log.Info().Str("remote_addr", r.RemoteAddr).Msg("ws client disconnected")
 }
 
 func csvToSet(s string) map[string]struct{} {

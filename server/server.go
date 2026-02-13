@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -49,6 +50,8 @@ type Server struct {
 	pending   map[string]pendingEntry
 
 	ingestQ chan ingestItem
+
+	droppedIngest atomic.Uint64
 }
 
 type pendingEntry struct {
@@ -69,6 +72,14 @@ func New(cfg config.ServerConfig, logger zerolog.Logger) *Server {
 }
 
 func (s *Server) Run(ctx context.Context) error {
+	s.log.Info().
+		Str("grpc_listen", s.cfg.GRPCListen).
+		Str("http_listen", s.cfg.HTTPListen).
+		Dur("retention", s.cfg.Retention).
+		Int("ingest_queue_size", s.cfg.IngestQueueSize).
+		Int("per_node_queue_size", s.cfg.PerNodeQueueSize).
+		Msg("server configuration loaded")
+
 	tlsCfg, err := security.LoadServerTLSConfig(s.cfg.TLS)
 	if err != nil {
 		return err
@@ -87,6 +98,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	go s.ingestLoop(ctx)
 	go s.wsHub.Run(ctx)
+	go s.reportDropStats(ctx)
 
 	router := s.newRouter()
 	s.httpServer = &http.Server{
@@ -220,7 +232,7 @@ func (s *Server) handleAgentMessage(nodeID string, msg *api.AgentMessage) {
 			select {
 			case s.ingestQ <- ingestItem{nodeID: nodeID, samples: msg.Metrics.Samples}:
 			default:
-				s.log.Warn().Str("node_id", nodeID).Msg("ingest queue full, sample dropped")
+				s.droppedIngest.Add(uint64(len(msg.Metrics.Samples)))
 			}
 		}
 	case api.MessageKindHeartbeat:
@@ -326,6 +338,11 @@ func (s *Server) dispatchCommand(ctx context.Context, nodeID string, cmd *api.Co
 	}
 	cmd.NodeID = nodeID
 	cmd.IssuedAt = time.Now().UnixNano()
+	s.log.Info().
+		Str("node_id", nodeID).
+		Str("command_id", cmd.ID).
+		Str("command_type", string(cmd.Type)).
+		Msg("dispatching command")
 
 	resultCh := s.registerPending(cmd.ID, nodeID)
 
@@ -342,11 +359,58 @@ func (s *Server) dispatchCommand(ctx context.Context, nodeID string, cmd *api.Co
 			return nil, fmt.Errorf("command result channel closed")
 		}
 		if !res.Success {
+			s.log.Warn().
+				Str("node_id", nodeID).
+				Str("command_id", cmd.ID).
+				Str("command_type", string(cmd.Type)).
+				Str("error", res.Error).
+				Msg("command failed")
 			return res, fmt.Errorf(res.Error)
 		}
+		s.log.Info().
+			Str("node_id", nodeID).
+			Str("command_id", cmd.ID).
+			Str("command_type", string(cmd.Type)).
+			Msg("command succeeded")
 		return res, nil
 	case <-ctx.Done():
 		s.clearPending(cmd.ID)
+		s.log.Warn().
+			Err(ctx.Err()).
+			Str("node_id", nodeID).
+			Str("command_id", cmd.ID).
+			Str("command_type", string(cmd.Type)).
+			Msg("command wait canceled or timed out")
 		return nil, ctx.Err()
+	}
+}
+
+func (s *Server) reportDropStats(ctx context.Context) {
+	const reportInterval = 5 * time.Second
+	ticker := time.NewTicker(reportInterval)
+	defer ticker.Stop()
+
+	logOnce := func() {
+		droppedIngest := s.droppedIngest.Swap(0)
+		wsDropped, wsSlowClients := s.wsHub.SwapDropStats()
+		if droppedIngest == 0 && wsDropped == 0 && wsSlowClients == 0 {
+			return
+		}
+		s.log.Warn().
+			Uint64("ingest_dropped_samples", droppedIngest).
+			Uint64("ws_dropped_samples", wsDropped).
+			Uint64("ws_slow_clients_dropped", wsSlowClients).
+			Dur("window", reportInterval).
+			Msg("drop summary")
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			logOnce()
+			return
+		case <-ticker.C:
+			logOnce()
+		}
 	}
 }

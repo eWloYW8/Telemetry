@@ -3,38 +3,36 @@ package main
 import (
 	"context"
 	"flag"
-	"os"
 	"os/signal"
 	"syscall"
 
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
-
 	"telemetry/agent"
 	"telemetry/config"
+	"telemetry/logging"
 )
 
 func main() {
 	cfgPath := flag.String("config", "configs/agent.yaml", "path to agent config")
 	flag.Parse()
 
-	zerolog.TimeFieldFormat = zerolog.TimeFormatUnixMs
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout})
-
 	cfg, err := config.LoadAgentConfig(*cfgPath)
 	if err != nil {
-		log.Fatal().Err(err).Msg("load agent config")
+		logger := logging.New(config.DefaultAgentConfig().Log, "telemetry-agent")
+		logger.Fatal().Err(err).Str("config_path", *cfgPath).Msg("load agent config")
 	}
+	logger := logging.New(cfg.Log, "telemetry-agent")
+	logger.Info().Str("config_path", *cfgPath).Msg("agent starting")
 
-	ag, err := agent.New(cfg, log.Logger)
+	ag, err := agent.New(cfg, logger)
 	if err != nil {
-		log.Fatal().Err(err).Msg("init agent")
+		logger.Fatal().Err(err).Msg("init agent")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	if err := ag.Run(ctx); err != nil && err != context.Canceled {
-		log.Fatal().Err(err).Msg("agent exited with error")
+		logger.Fatal().Err(err).Msg("agent exited with error")
 	}
+	logger.Info().Msg("agent stopped")
 }

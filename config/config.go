@@ -15,6 +15,11 @@ type TLSConfig struct {
 	ServerNameOverride string `yaml:"server_name_override"`
 }
 
+type LogConfig struct {
+	Level  string `yaml:"level"`
+	Format string `yaml:"format"`
+}
+
 type ServerConfig struct {
 	GRPCListen        string        `yaml:"grpc_listen"`
 	HTTPListen        string        `yaml:"http_listen"`
@@ -26,6 +31,7 @@ type ServerConfig struct {
 	HTTPReadTimeout   time.Duration `yaml:"http_read_timeout"`
 	HTTPWriteTimeout  time.Duration `yaml:"http_write_timeout"`
 	HTTPIdleTimeout   time.Duration `yaml:"http_idle_timeout"`
+	Log               LogConfig     `yaml:"log"`
 	TLS               TLSConfig     `yaml:"tls"`
 }
 
@@ -36,6 +42,7 @@ type AgentConfig struct {
 	SendQueueSize    int           `yaml:"send_queue_size"`
 	ControlTimeout   time.Duration `yaml:"control_timeout"`
 	Report           ReportConfig  `yaml:"report"`
+	Log              LogConfig     `yaml:"log"`
 	TLS              TLSConfig     `yaml:"tls"`
 }
 
@@ -69,6 +76,10 @@ func DefaultServerConfig() ServerConfig {
 		HTTPReadTimeout:   10 * time.Second,
 		HTTPWriteTimeout:  15 * time.Second,
 		HTTPIdleTimeout:   30 * time.Second,
+		Log: LogConfig{
+			Level:  "info",
+			Format: "console",
+		},
 	}
 }
 
@@ -91,6 +102,10 @@ func DefaultAgentConfig() AgentConfig {
 			Heartbeat:   2 * time.Second,
 			BatchFlush:  100 * time.Millisecond,
 			MaxPerBatch: 64,
+		},
+		Log: LogConfig{
+			Level:  "info",
+			Format: "console",
 		},
 	}
 }
@@ -159,6 +174,12 @@ func applyServerDefaults(cfg *ServerConfig) {
 	if cfg.HTTPIdleTimeout <= 0 {
 		cfg.HTTPIdleTimeout = d.HTTPIdleTimeout
 	}
+	if cfg.Log.Level == "" {
+		cfg.Log.Level = d.Log.Level
+	}
+	if cfg.Log.Format == "" {
+		cfg.Log.Format = d.Log.Format
+	}
 }
 
 func applyAgentDefaults(cfg *AgentConfig) {
@@ -191,5 +212,11 @@ func applyAgentDefaults(cfg *AgentConfig) {
 	}
 	if cfg.Report.MaxPerBatch <= 0 {
 		cfg.Report.MaxPerBatch = d.Report.MaxPerBatch
+	}
+	if cfg.Log.Level == "" {
+		cfg.Log.Level = d.Log.Level
+	}
+	if cfg.Log.Format == "" {
+		cfg.Log.Format = d.Log.Format
 	}
 }

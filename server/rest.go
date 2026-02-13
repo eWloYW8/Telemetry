@@ -1,12 +1,15 @@
 package server
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -23,6 +26,7 @@ const maxProtoPayloadBytes = 1 << 20
 
 func (s *Server) newRouter() http.Handler {
 	r := chi.NewRouter()
+	r.Use(s.httpLogMiddleware)
 
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeProto(w, http.StatusOK, &pb.HealthzResponse{Status: "ok", TimeUnixNano: time.Now().UnixNano()})
@@ -40,6 +44,74 @@ func (s *Server) newRouter() http.Handler {
 	})
 
 	return r
+}
+
+type httpStatusRecorder struct {
+	http.ResponseWriter
+	status int
+	bytes  int
+}
+
+func (r *httpStatusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *httpStatusRecorder) Write(p []byte) (int, error) {
+	n, err := r.ResponseWriter.Write(p)
+	r.bytes += n
+	return n, err
+}
+
+func (r *httpStatusRecorder) Flush() {
+	if flusher, ok := r.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (r *httpStatusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := r.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, http.ErrNotSupported
+	}
+	return hijacker.Hijack()
+}
+
+func (r *httpStatusRecorder) Push(target string, opts *http.PushOptions) error {
+	if pusher, ok := r.ResponseWriter.(http.Pusher); ok {
+		return pusher.Push(target, opts)
+	}
+	return http.ErrNotSupported
+}
+
+func (s *Server) httpLogMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &httpStatusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+
+		event := s.log.With().
+			Str("method", r.Method).
+			Str("path", r.URL.Path).
+			Int("status", rec.status).
+			Int("bytes", rec.bytes).
+			Dur("duration", time.Since(start)).
+			Str("remote_addr", r.RemoteAddr).
+			Logger()
+
+		switch {
+		case rec.status >= 500:
+			event.Error().Msg("http request")
+		case rec.status >= 400:
+			event.Warn().Msg("http request")
+		case r.URL.Path == "/healthz":
+			event.Debug().Msg("http request")
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/nodes/"):
+			event.Info().Msg("http request")
+		default:
+			event.Debug().Msg("http request")
+		}
+	})
 }
 
 func (s *Server) handleListNodes(w http.ResponseWriter, _ *http.Request) {

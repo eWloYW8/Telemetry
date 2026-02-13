@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -40,6 +41,8 @@ type Agent struct {
 
 	metricsQueue chan api.MetricSample
 	resultQueue  chan *api.CommandResult
+
+	droppedMetrics atomic.Uint64
 }
 
 func New(cfg config.AgentConfig, logger zerolog.Logger) (*Agent, error) {
@@ -97,10 +100,20 @@ func New(cfg config.AgentConfig, logger zerolog.Logger) (*Agent, error) {
 		resultQueue:  make(chan *api.CommandResult, cfg.SendQueueSize),
 	}
 
+	agent.log.Info().
+		Str("server_addr", cfg.ServerAddress).
+		Int("send_queue_size", cfg.SendQueueSize).
+		Dur("control_timeout", cfg.ControlTimeout).
+		Dur("heartbeat", cfg.Report.Heartbeat).
+		Dur("batch_flush", cfg.Report.BatchFlush).
+		Int("max_per_batch", cfg.Report.MaxPerBatch).
+		Msg("agent configuration loaded")
+
 	return agent, nil
 }
 
 func (a *Agent) Run(ctx context.Context) error {
+	a.log.Info().Str("server_addr", a.cfg.ServerAddress).Dur("reconnect_backoff", a.cfg.ReconnectBackoff).Msg("agent run loop started")
 	for {
 		if err := a.runOnce(ctx); err != nil {
 			if ctx.Err() != nil {
@@ -113,6 +126,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(a.cfg.ReconnectBackoff):
+			a.log.Debug().Dur("backoff", a.cfg.ReconnectBackoff).Msg("retrying server connection")
 		}
 	}
 }
@@ -136,6 +150,7 @@ func (a *Agent) runOnce(ctx context.Context) error {
 		return fmt.Errorf("dial grpc server: %w", err)
 	}
 	defer conn.Close()
+	a.log.Info().Str("server_addr", a.cfg.ServerAddress).Msg("connected to grpc server")
 
 	client := pb.NewTelemetryServiceClient(conn)
 	stream, err := client.StreamTelemetry(ctx)
@@ -155,11 +170,16 @@ func (a *Agent) runOnce(ctx context.Context) error {
 	defer streamCancel()
 
 	var wg sync.WaitGroup
-	wg.Add(3)
+	wg.Add(4)
 
 	go func() {
 		defer wg.Done()
 		a.runCollectors(streamCtx)
+	}()
+
+	go func() {
+		defer wg.Done()
+		a.reportDroppedMetrics(streamCtx)
 	}()
 
 	errCh := make(chan error, 2)
@@ -167,14 +187,14 @@ func (a *Agent) runOnce(ctx context.Context) error {
 	go func() {
 		defer wg.Done()
 		if err := a.senderLoop(streamCtx, stream); err != nil {
-			errCh <- err
+			errCh <- fmt.Errorf("sender loop: %w", err)
 		}
 	}()
 
 	go func() {
 		defer wg.Done()
 		if err := a.receiverLoop(streamCtx, stream); err != nil {
-			errCh <- err
+			errCh <- fmt.Errorf("receiver loop: %w", err)
 		}
 	}()
 
@@ -187,6 +207,28 @@ func (a *Agent) runOnce(ctx context.Context) error {
 		streamCancel()
 		wg.Wait()
 		return err
+	}
+}
+
+func (a *Agent) reportDroppedMetrics(ctx context.Context) {
+	const reportInterval = 5 * time.Second
+	ticker := time.NewTicker(reportInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			dropped := a.droppedMetrics.Swap(0)
+			if dropped > 0 {
+				a.log.Warn().Uint64("dropped_samples", dropped).Dur("window", reportInterval).Msg("metrics dropped due to full send queue")
+			}
+			return
+		case <-ticker.C:
+			dropped := a.droppedMetrics.Swap(0)
+			if dropped == 0 {
+				continue
+			}
+			a.log.Warn().Uint64("dropped_samples", dropped).Dur("window", reportInterval).Msg("metrics dropped due to full send queue")
+		}
 	}
 }
 
@@ -206,7 +248,7 @@ func (a *Agent) runCollectors(ctx context.Context) {
 		select {
 		case a.metricsQueue <- sample:
 		default:
-			a.log.Warn().Str("module", moduleName).Str("category", string(category)).Msg("metrics queue is full, drop sample")
+			a.droppedMetrics.Add(1)
 		}
 	}
 
@@ -314,6 +356,16 @@ func (a *Agent) receiverLoop(ctx context.Context, stream pb.TelemetryService_Str
 		if result == nil {
 			return
 		}
+		event := a.log.With().
+			Str("command_id", result.CommandID).
+			Str("command_type", string(result.Type)).
+			Bool("success", result.Success).
+			Logger()
+		if result.Success {
+			event.Info().Msg("command executed")
+		} else {
+			event.Warn().Str("error", result.Error).Msg("command failed")
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -337,7 +389,16 @@ func (a *Agent) receiverLoop(ctx context.Context, stream pb.TelemetryService_Str
 		if msg.Kind != api.MessageKindCommand || msg.Command == nil {
 			continue
 		}
+		a.log.Info().
+			Str("command_id", msg.Command.ID).
+			Str("command_type", string(msg.Command.Type)).
+			Msg("received command")
 		if err := dispatcher.Submit(msg.Command); err != nil {
+			a.log.Warn().
+				Err(err).
+				Str("command_id", msg.Command.ID).
+				Str("command_type", string(msg.Command.Type)).
+				Msg("failed to submit command")
 			result := &api.CommandResult{
 				CommandID:  msg.Command.ID,
 				NodeID:     a.nodeID,
