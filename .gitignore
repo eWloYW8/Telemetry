@@ -1,7 +1,6 @@
 .vscode
 
 certs
-configs
 
 /telemetry-agent*
 /telemetry-server*
