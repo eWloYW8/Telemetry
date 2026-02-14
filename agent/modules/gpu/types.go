@@ -18,6 +18,10 @@ type StaticInfo struct {
 	MemoryTotalBytes  uint64
 	PowerMinMilliWatt uint32
 	PowerMaxMilliWatt uint32
+	SMClockMinMHz     uint32
+	SMClockMaxMHz     uint32
+	MemClockMinMHz    uint32
+	MemClockMaxMHz    uint32
 }
 
 type CollectorSpec struct {
@@ -49,6 +53,7 @@ type DeviceFastMetrics struct {
 	MemClockMinMHz   uint32
 	MemClockMaxMHz   uint32
 	PowerLimitMilliW uint32
+	SampledAtNano    int64
 }
 
 type FastMetrics struct {

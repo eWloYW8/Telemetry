@@ -9,15 +9,20 @@ type CollectorSpec struct {
 	Interval string
 }
 
+type StaticInfo struct {
+	TotalBytes uint64
+}
+
 type Registration struct {
+	Static     StaticInfo
 	Collectors []CollectorSpec
 }
 
 type Metrics struct {
-	TotalBytes     uint64
 	UsedBytes      uint64
 	FreeBytes      uint64
 	AvailableBytes uint64
 	CachedBytes    uint64
 	BuffersBytes   uint64
+	SampledAtNano  int64
 }

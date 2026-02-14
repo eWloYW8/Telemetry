@@ -1,6 +1,7 @@
 .vscode
 
 certs
+ui_dist
 
 /telemetry-agent*
 /telemetry-server*

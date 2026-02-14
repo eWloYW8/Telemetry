@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package telemetry.module.storage.v1;
+
+option go_package = "telemetry/agent/modules/storage/pb;storagepb";
+
+message CollectorSpec {
+  string category = 1;
+  string interval = 2;
+}
+
+message StaticDiskInfo {
+  string name = 1;
+  string mountpoint = 2;
+  string filesystem = 3;
+  uint64 total_bytes = 4;
+}
+
+message ModuleRegistration {
+  repeated CollectorSpec collectors = 1;
+  repeated StaticDiskInfo static_disks = 2;
+}
+
+message DiskMetrics {
+  string name = 1;
+  uint64 used_bytes = 2;
+  uint64 free_bytes = 3;
+  uint64 read_sectors = 4;
+  uint64 write_sectors = 5;
+  uint64 read_ios = 6;
+  uint64 write_ios = 7;
+}
+
+message Metrics {
+  repeated DiskMetrics disks = 1;
+}

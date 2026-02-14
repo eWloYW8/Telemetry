@@ -7,6 +7,9 @@ func toPBModuleRegistration(v *Registration) *memorypb.ModuleRegistration {
 		return nil
 	}
 	out := &memorypb.ModuleRegistration{
+		Static: &memorypb.StaticInfo{
+			TotalBytes: v.Static.TotalBytes,
+		},
 		Collectors: make([]*memorypb.CollectorSpec, 0, len(v.Collectors)),
 	}
 	for _, c := range v.Collectors {
@@ -23,11 +26,11 @@ func toPBMetrics(v *Metrics) *memorypb.Metrics {
 		return nil
 	}
 	return &memorypb.Metrics{
-		TotalBytes:     v.TotalBytes,
-		UsedBytes:      v.UsedBytes,
-		FreeBytes:      v.FreeBytes,
-		AvailableBytes: v.AvailableBytes,
-		CachedBytes:    v.CachedBytes,
-		BuffersBytes:   v.BuffersBytes,
+		UsedBytes:         v.UsedBytes,
+		FreeBytes:         v.FreeBytes,
+		AvailableBytes:    v.AvailableBytes,
+		CachedBytes:       v.CachedBytes,
+		BuffersBytes:      v.BuffersBytes,
+		SampledAtUnixNano: v.SampledAtNano,
 	}
 }

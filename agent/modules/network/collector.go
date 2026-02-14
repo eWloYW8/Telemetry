@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Collector struct{}
@@ -56,6 +57,7 @@ func (c *Collector) Collect() (*Metrics, error) {
 		entry.RxPackets, _ = strconv.ParseUint(fields[2], 10, 64)
 		entry.TxBytes, _ = strconv.ParseUint(fields[9], 10, 64)
 		entry.TxPackets, _ = strconv.ParseUint(fields[10], 10, 64)
+		entry.SampledAtNano = time.Now().UnixNano()
 		stats[name] = entry
 	}
 

@@ -8,13 +8,14 @@ const (
 )
 
 type Info struct {
-	PID         int
-	PPID        int
-	User        string
-	State       string
-	CPUPercent  float64
-	MemoryBytes uint64
-	Command     string
+	PID           int
+	PPID          int
+	User          string
+	State         string
+	CPUPercent    float64
+	MemoryBytes   uint64
+	Command       string
+	SampledAtNano int64
 }
 
 type Metrics struct {

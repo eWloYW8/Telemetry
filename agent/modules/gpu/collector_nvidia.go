@@ -4,6 +4,7 @@ package gpu
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
 )
@@ -41,6 +42,8 @@ func NewCollector() (*Collector, error) {
 		uuid, _ := nvml.DeviceGetUUID(dev)
 		mem, _ := nvml.DeviceGetMemoryInfo(dev)
 		minP, maxP, _ := nvml.DeviceGetPowerManagementLimitConstraints(dev)
+		smMin, smMax := getClockRange(dev, nvml.CLOCK_SM)
+		memMin, memMax := getClockRange(dev, nvml.CLOCK_MEM)
 		collector.static = append(collector.static, StaticInfo{
 			Index:             i,
 			Name:              name,
@@ -48,6 +51,10 @@ func NewCollector() (*Collector, error) {
 			MemoryTotalBytes:  mem.Total,
 			PowerMinMilliWatt: minP,
 			PowerMaxMilliWatt: maxP,
+			SMClockMinMHz:     smMin,
+			SMClockMaxMHz:     smMax,
+			MemClockMinMHz:    memMin,
+			MemClockMaxMHz:    memMax,
 		})
 	}
 
@@ -85,6 +92,7 @@ func (g *Collector) CollectFast() (*FastMetrics, error) {
 		limit, _ := nvml.DeviceGetPowerManagementLimit(dev)
 		smMin, smMax := getClockRange(dev, nvml.CLOCK_SM)
 		memMin, memMax := getClockRange(dev, nvml.CLOCK_MEM)
+		sampledAt := time.Now().UnixNano()
 
 		out.Devices = append(out.Devices, DeviceFastMetrics{
 			Index:            i,
@@ -100,6 +108,7 @@ func (g *Collector) CollectFast() (*FastMetrics, error) {
 			MemClockMinMHz:   memMin,
 			MemClockMaxMHz:   memMax,
 			PowerLimitMilliW: limit,
+			SampledAtNano:    sampledAt,
 		})
 	}
 	return out, nil

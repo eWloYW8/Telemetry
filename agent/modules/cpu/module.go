@@ -63,7 +63,8 @@ func (m *Module) Registration() any {
 			{Type: string(CommandSetUncoreRange)},
 			{Type: string(CommandSetPowerCap)},
 		},
-		Devices: m.collector.Devices(),
+		Devices:  m.collector.Devices(),
+		Controls: m.collector.PackageControls(),
 	})
 }
 

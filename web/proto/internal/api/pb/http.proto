@@ -1,0 +1,62 @@
+syntax = "proto3";
+
+package telemetry.v1;
+
+option go_package = "telemetry/api/pb;pb";
+
+import "internal/api/pb/telemetry.proto";
+
+message NodeSnapshot {
+  string node_id = 1;
+  bool connected = 2;
+  int64 last_seen_unix_nano = 3;
+  Registration registration = 4;
+  repeated MetricSample latest = 5;
+}
+
+message ListNodesResponse {
+  repeated NodeSnapshot nodes = 1;
+}
+
+message NodeModulesResponse {
+  repeated ModuleRegistration modules = 1;
+}
+
+message TimedSample {
+  string node_id = 1;
+  MetricSample sample = 2;
+}
+
+message SamplesResponse {
+  repeated TimedSample samples = 1;
+}
+
+message ErrorResponse {
+  string error = 1;
+  int64 time_unix_nano = 2;
+}
+
+message HealthzResponse {
+  string status = 1;
+  int64 time_unix_nano = 2;
+}
+
+message WSWelcome {
+  int64 server_time_unix_nano = 1;
+  repeated string nodes = 2;
+  repeated string categories = 3;
+}
+
+message WSClientControl {
+  string op = 1;
+  repeated string nodes = 2;
+  repeated string categories = 3;
+}
+
+message WSOutgoingMessage {
+  string type = 1;
+  TimedSample metric = 2;
+  WSWelcome welcome = 3;
+  string error = 4;
+  NodeSnapshot node = 5;
+}

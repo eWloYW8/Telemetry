@@ -28,6 +28,7 @@ func (m *Module) Registration() any {
 		return nil
 	}
 	return toPBModuleRegistration(&Registration{
+		Static: m.collector.StaticInfo(),
 		Collectors: []CollectorSpec{{
 			Category: string(Category),
 			Interval: m.intervals.Interval(string(Category), defaultInterval).String(),

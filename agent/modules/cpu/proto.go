@@ -19,9 +19,10 @@ func toPBModuleRegistration(v *Registration) *cpupb.ModuleRegistration {
 			SupportsIntelUncore: v.Static.SupportsIntelUncore,
 			SupportsRapl:        v.Static.SupportsRAPL,
 		},
-		Collectors:  make([]*cpupb.CollectorSpec, 0, len(v.Collectors)),
-		Controllers: make([]*cpupb.ControllerSpec, 0, len(v.Controllers)),
-		Devices:     make([]*cpupb.CpuDevice, 0, len(v.Devices)),
+		Collectors:      make([]*cpupb.CollectorSpec, 0, len(v.Collectors)),
+		Controllers:     make([]*cpupb.ControllerSpec, 0, len(v.Controllers)),
+		Devices:         make([]*cpupb.CpuDevice, 0, len(v.Devices)),
+		PackageControls: make([]*cpupb.PackageControl, 0, len(v.Controls)),
 	}
 	for _, c := range v.Collectors {
 		out.Collectors = append(out.Collectors, &cpupb.CollectorSpec{
@@ -46,6 +47,24 @@ func toPBModuleRegistration(v *Registration) *cpupb.ModuleRegistration {
 			Model:       d.Model,
 		})
 	}
+	for _, c := range v.Controls {
+		out.PackageControls = append(out.PackageControls, &cpupb.PackageControl{
+			PackageId:          int32(c.PackageID),
+			ScalingMinKhz:      c.ScalingMinKHz,
+			ScalingMaxKhz:      c.ScalingMaxKHz,
+			ScalingHwMinKhz:    c.ScalingHWMinKHz,
+			ScalingHwMaxKhz:    c.ScalingHWMaxKHz,
+			AvailableGovernors: append([]string(nil), c.AvailableGovernors...),
+			CurrentGovernor:    c.CurrentGovernor,
+			ScalingDriver:      c.ScalingDriver,
+			UncoreCurrentKhz:   c.UncoreCurrentKHz,
+			UncoreMinKhz:       c.UncoreMinKHz,
+			UncoreMaxKhz:       c.UncoreMaxKHz,
+			PowerCapMicroW:     c.PowerCapMicroW,
+			PowerCapMinMicroW:  c.PowerCapMinMicroW,
+			PowerCapMaxMicroW:  c.PowerCapMaxMicroW,
+		})
+	}
 	return out
 }
 
@@ -59,16 +78,18 @@ func toPBMediumMetrics(v *MediumMetrics) *cpupb.MediumMetrics {
 	}
 	for _, c := range v.Cores {
 		out.Cores = append(out.Cores, &cpupb.CoreFastMetrics{
-			CoreId:        int32(c.CoreID),
-			Utilization:   c.Utilization,
-			ScalingCurKhz: c.ScalingCurKHz,
-			PackageId:     int32(c.PackageID),
+			CoreId:            int32(c.CoreID),
+			Utilization:       c.Utilization,
+			ScalingCurKhz:     c.ScalingCurKHz,
+			PackageId:         int32(c.PackageID),
+			SampledAtUnixNano: c.SampledAtNano,
 		})
 	}
 	for _, t := range v.Temperatures {
 		out.Temperatures = append(out.Temperatures, &cpupb.PackageTemperature{
-			PackageId: int32(t.PackageID),
-			MilliC:    t.MilliC,
+			PackageId:         int32(t.PackageID),
+			MilliC:            t.MilliC,
+			SampledAtUnixNano: t.SampledAtNano,
 		})
 	}
 	return out
@@ -92,23 +113,26 @@ func toPBUltraMetrics(v *UltraMetrics) *cpupb.UltraMetrics {
 			CurrentGovernor:    c.CurrentGovernor,
 			ScalingDriver:      c.ScalingDriver,
 			PackageId:          int32(c.PackageID),
+			SampledAtUnixNano:  c.SampledAtNano,
 		})
 	}
 	for _, r := range v.RAPL {
 		out.Rapl = append(out.Rapl, &cpupb.PackageRAPL{
-			PackageId:      int32(r.PackageID),
-			EnergyMicroJ:   r.EnergyMicroJ,
-			PowerCapMicroW: r.PowerCapMicroW,
+			PackageId:         int32(r.PackageID),
+			EnergyMicroJ:      r.EnergyMicroJ,
+			PowerCapMicroW:    r.PowerCapMicroW,
+			SampledAtUnixNano: r.SampledAtNano,
 		})
 	}
 	for _, u := range v.Uncore {
 		out.Uncore = append(out.Uncore, &cpupb.UncoreMetrics{
-			PackageId:     int32(u.PackageID),
-			CurrentKhz:    u.CurrentKHz,
-			MinKhz:        u.MinKHz,
-			MaxKhz:        u.MaxKHz,
-			InitialMinKhz: u.InitialMinKHz,
-			InitialMaxKhz: u.InitialMaxKHz,
+			PackageId:         int32(u.PackageID),
+			CurrentKhz:        u.CurrentKHz,
+			MinKhz:            u.MinKHz,
+			MaxKhz:            u.MaxKHz,
+			InitialMinKhz:     u.InitialMinKHz,
+			InitialMaxKhz:     u.InitialMaxKHz,
+			SampledAtUnixNano: u.SampledAtNano,
 		})
 	}
 	return out

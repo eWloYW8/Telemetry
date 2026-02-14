@@ -16,6 +16,8 @@ type corePaths struct {
 	scalingCur     string
 	scalingMin     string
 	scalingMax     string
+	cpuinfoMin     string
+	cpuinfoMax     string
 	governor       string
 	availGovernors string
 	driver         string
@@ -25,6 +27,7 @@ type raplZone struct {
 	packageID    int
 	energyPath   string
 	powerCapPath string
+	maxPowerPath string
 }
 
 type coreTick struct {
@@ -62,6 +65,8 @@ func NewCollector(static StaticInfo, mappings []CoreMapping, packageTemps map[in
 			scalingCur:     filepath.Join(base, "scaling_cur_freq"),
 			scalingMin:     filepath.Join(base, "scaling_min_freq"),
 			scalingMax:     filepath.Join(base, "scaling_max_freq"),
+			cpuinfoMin:     filepath.Join(base, "cpuinfo_min_freq"),
+			cpuinfoMax:     filepath.Join(base, "cpuinfo_max_freq"),
 			governor:       filepath.Join(base, "scaling_governor"),
 			availGovernors: filepath.Join(base, "scaling_available_governors"),
 			driver:         filepath.Join(base, "scaling_driver"),
@@ -174,6 +179,7 @@ func discoverRAPLZones() map[int]raplZone {
 			packageID:    pkgID,
 			energyPath:   filepath.Join(base, "energy_uj"),
 			powerCapPath: filepath.Join(base, "constraint_0_power_limit_uw"),
+			maxPowerPath: filepath.Join(base, "constraint_0_max_power_uw"),
 		}
 	}
 	return zones
@@ -229,11 +235,13 @@ func (c *Collector) CollectMedium() (*MediumMetrics, error) {
 			}
 		}
 		curKHz, _ := readUint(cp.scalingCur)
+		sampledAt := time.Now().UnixNano()
 		out.Cores = append(out.Cores, CoreFastMetrics{
 			CoreID:        cp.coreID,
 			Utilization:   util,
 			ScalingCurKHz: curKHz,
 			PackageID:     c.coreToPkg[cp.coreID],
+			SampledAtNano: sampledAt,
 		})
 	}
 	c.mu.Unlock()
@@ -250,9 +258,11 @@ func (c *Collector) CollectMedium() (*MediumMetrics, error) {
 			if err != nil {
 				continue
 			}
+			sampledAt := time.Now().UnixNano()
 			out.Temperatures = append(out.Temperatures, PackageTemperature{
-				PackageID: pkgID,
-				MilliC:    uint32(v),
+				PackageID:     pkgID,
+				MilliC:        uint32(v),
+				SampledAtNano: sampledAt,
 			})
 		}
 	}
@@ -311,6 +321,7 @@ func (c *Collector) CollectUltra() (*UltraMetrics, error) {
 		gov, _ := readTrimmed(cp.governor)
 		avail, _ := readTrimmed(cp.availGovernors)
 		driver, _ := readTrimmed(cp.driver)
+		sampledAt := time.Now().UnixNano()
 
 		cfg := PerCoreConfig{
 			CoreID:          cp.coreID,
@@ -319,6 +330,7 @@ func (c *Collector) CollectUltra() (*UltraMetrics, error) {
 			CurrentGovernor: gov,
 			ScalingDriver:   driver,
 			PackageID:       c.coreToPkg[cp.coreID],
+			SampledAtNano:   sampledAt,
 		}
 		if avail != "" {
 			cfg.AvailableGovernors = strings.Fields(avail)
@@ -341,6 +353,7 @@ func (c *Collector) CollectUltra() (*UltraMetrics, error) {
 		maxVal, _ := readUint(filepath.Join(base, "max_freq_khz"))
 		initMin, _ := readUint(filepath.Join(base, "initial_min_freq_khz"))
 		initMax, _ := readUint(filepath.Join(base, "initial_max_freq_khz"))
+		sampledAt := time.Now().UnixNano()
 		out.Uncore = append(out.Uncore, UncoreMetrics{
 			PackageID:     pkgID,
 			CurrentKHz:    current,
@@ -348,6 +361,7 @@ func (c *Collector) CollectUltra() (*UltraMetrics, error) {
 			MaxKHz:        maxVal,
 			InitialMinKHz: initMin,
 			InitialMaxKHz: initMax,
+			SampledAtNano: sampledAt,
 		})
 	}
 
@@ -376,6 +390,97 @@ func (c *Collector) Devices() []DeviceInfo {
 			CoreCount:   d.CoreCount,
 			ThreadCount: d.ThreadCount,
 		})
+	}
+	return out
+}
+
+func (c *Collector) PackageControls() []PackageControlInfo {
+	if c == nil {
+		return nil
+	}
+
+	controlsByPkg := make(map[int]*PackageControlInfo, len(c.sampleCore))
+	for _, cp := range c.sampleCore {
+		pkgID := c.coreToPkg[cp.coreID]
+		minVal, _ := readUint(cp.scalingMin)
+		maxVal, _ := readUint(cp.scalingMax)
+		gov, _ := readTrimmed(cp.governor)
+		avail, _ := readTrimmed(cp.availGovernors)
+		driver, _ := readTrimmed(cp.driver)
+
+		info := &PackageControlInfo{
+			PackageID:       pkgID,
+			ScalingMinKHz:   minVal,
+			ScalingMaxKHz:   maxVal,
+			ScalingHWMinKHz: minVal,
+			ScalingHWMaxKHz: maxVal,
+			CurrentGovernor: gov,
+			ScalingDriver:   driver,
+		}
+		if hwMin, err := readUint(cp.cpuinfoMin); err == nil && hwMin > 0 {
+			info.ScalingHWMinKHz = hwMin
+		}
+		if hwMax, err := readUint(cp.cpuinfoMax); err == nil && hwMax > 0 {
+			info.ScalingHWMaxKHz = hwMax
+		}
+		if avail != "" {
+			info.AvailableGovernors = strings.Fields(avail)
+		}
+		controlsByPkg[pkgID] = info
+	}
+
+	pkgIDs := make([]int, 0, len(controlsByPkg))
+	for pkgID := range controlsByPkg {
+		pkgIDs = append(pkgIDs, pkgID)
+	}
+	sort.Ints(pkgIDs)
+
+	for _, pkgID := range pkgIDs {
+		base, ok := c.uncorePaths[pkgID]
+		if !ok {
+			continue
+		}
+		ctrl := controlsByPkg[pkgID]
+		ctrl.UncoreCurrentKHz, _ = readUint(filepath.Join(base, "current_freq_khz"))
+		ctrl.UncoreMinKHz, _ = readUint(filepath.Join(base, "min_freq_khz"))
+		ctrl.UncoreMaxKHz, _ = readUint(filepath.Join(base, "max_freq_khz"))
+	}
+
+	if c.raplBackend != nil {
+		for _, cap := range c.raplBackend.ReadControlRanges() {
+			ctrl, ok := controlsByPkg[cap.PackageID]
+			if !ok {
+				ctrl = &PackageControlInfo{PackageID: cap.PackageID}
+				controlsByPkg[cap.PackageID] = ctrl
+				pkgIDs = append(pkgIDs, cap.PackageID)
+			}
+			ctrl.PowerCapMicroW = cap.CurrentMicroW
+			ctrl.PowerCapMinMicroW = cap.MinMicroWatt
+			ctrl.PowerCapMaxMicroW = cap.MaxMicroWatt
+		}
+	}
+
+	sort.Ints(pkgIDs)
+	dedup := pkgIDs[:0]
+	last := -1
+	for _, pkgID := range pkgIDs {
+		if len(dedup) > 0 && pkgID == last {
+			continue
+		}
+		dedup = append(dedup, pkgID)
+		last = pkgID
+	}
+	pkgIDs = dedup
+
+	out := make([]PackageControlInfo, 0, len(pkgIDs))
+	for _, pkgID := range pkgIDs {
+		ctrl := controlsByPkg[pkgID]
+		if ctrl == nil {
+			continue
+		}
+		cp := *ctrl
+		cp.AvailableGovernors = append([]string(nil), ctrl.AvailableGovernors...)
+		out = append(out, cp)
 	}
 	return out
 }

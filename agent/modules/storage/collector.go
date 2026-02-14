@@ -4,12 +4,23 @@ import (
 	"bufio"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
-type Collector struct{}
+type staticDisk struct {
+	name       string
+	mountpoint string
+	fsType     string
+	totalBytes uint64
+}
+
+type Collector struct {
+	disks []staticDisk
+}
 
 type diskIOCounters struct {
 	readIOs      uint64
@@ -25,40 +36,81 @@ type mountInfo struct {
 }
 
 func NewCollector() *Collector {
-	return &Collector{}
+	return &Collector{
+		disks: discoverStaticDisks(),
+	}
+}
+
+func (c *Collector) StaticDisks() []StaticDiskInfo {
+	if c == nil || len(c.disks) == 0 {
+		return nil
+	}
+	out := make([]StaticDiskInfo, 0, len(c.disks))
+	for _, d := range c.disks {
+		out = append(out, StaticDiskInfo{
+			Name:       d.name,
+			Mountpoint: d.mountpoint,
+			Filesystem: d.fsType,
+			TotalBytes: d.totalBytes,
+		})
+	}
+	return out
 }
 
 func (c *Collector) Collect() (*Metrics, error) {
 	ioCounters := readDiskStats()
+	out := &Metrics{Disks: make([]DiskMetrics, 0, len(c.disks))}
+	for _, d := range c.disks {
+		var st syscall.Statfs_t
+		if err := syscall.Statfs(d.mountpoint, &st); err != nil {
+			continue
+		}
+		free := st.Bavail * uint64(st.Bsize)
+		used := uint64(0)
+		if d.totalBytes > free {
+			used = d.totalBytes - free
+		}
+		io := ioCounters[d.name]
+		sampledAt := time.Now().UnixNano()
+		out.Disks = append(out.Disks, DiskMetrics{
+			Name:          d.name,
+			UsedBytes:     used,
+			FreeBytes:     free,
+			ReadSectors:   io.readSectors,
+			WriteSectors:  io.writeSectors,
+			ReadIOs:       io.readIOs,
+			WriteIOs:      io.writeIOs,
+			SampledAtNano: sampledAt,
+		})
+	}
+	return out, nil
+}
+
+func discoverStaticDisks() []staticDisk {
 	mounts, err := readMounts()
 	if err != nil {
-		return nil, err
+		return nil
 	}
-	out := &Metrics{Disks: make([]DiskMetrics, 0, len(mounts))}
+	out := make([]staticDisk, 0, len(mounts))
 	for _, m := range mounts {
 		var st syscall.Statfs_t
 		if err := syscall.Statfs(m.mountpoint, &st); err != nil {
 			continue
 		}
-		total := st.Blocks * uint64(st.Bsize)
-		free := st.Bavail * uint64(st.Bsize)
-		used := total - free
-		device := filepath.Base(m.device)
-		io := ioCounters[device]
-		out.Disks = append(out.Disks, DiskMetrics{
-			Name:         device,
-			Mountpoint:   m.mountpoint,
-			Filesystem:   m.fsType,
-			TotalBytes:   total,
-			UsedBytes:    used,
-			FreeBytes:    free,
-			ReadSectors:  io.readSectors,
-			WriteSectors: io.writeSectors,
-			ReadIOs:      io.readIOs,
-			WriteIOs:     io.writeIOs,
+		out = append(out, staticDisk{
+			name:       filepath.Base(m.device),
+			mountpoint: m.mountpoint,
+			fsType:     m.fsType,
+			totalBytes: st.Blocks * uint64(st.Bsize),
 		})
 	}
-	return out, nil
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].name == out[j].name {
+			return out[i].mountpoint < out[j].mountpoint
+		}
+		return out[i].name < out[j].name
+	})
+	return out
 }
 
 func readMounts() ([]mountInfo, error) {

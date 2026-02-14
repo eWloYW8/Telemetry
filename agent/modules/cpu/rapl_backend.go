@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	esmi "github.com/eWloYW8/esmi-go"
 )
@@ -14,6 +15,14 @@ import (
 type raplBackend interface {
 	ReadAll() []PackageRAPL
 	SetPowerCap(pkgID int, microWatt uint64) error
+	ReadControlRanges() []PackagePowerCapRange
+}
+
+type PackagePowerCapRange struct {
+	PackageID     int
+	CurrentMicroW uint64
+	MinMicroWatt  uint64
+	MaxMicroWatt  uint64
 }
 
 func newRAPLBackend(static StaticInfo, mappings []CoreMapping) raplBackend {
@@ -62,10 +71,12 @@ func (b *intelRAPLBackend) ReadAll() []PackageRAPL {
 			continue
 		}
 		capVal, _ := readUint(zone.powerCapPath)
+		sampledAt := time.Now().UnixNano()
 		out = append(out, PackageRAPL{
 			PackageID:      pkgID,
 			EnergyMicroJ:   energy,
 			PowerCapMicroW: capVal,
+			SampledAtNano:  sampledAt,
 		})
 	}
 	return out
@@ -83,6 +94,30 @@ func (b *intelRAPLBackend) SetPowerCap(pkgID int, microWatt uint64) error {
 		return fmt.Errorf("set package %d power cap: %w", pkgID, err)
 	}
 	return nil
+}
+
+func (b *intelRAPLBackend) ReadControlRanges() []PackagePowerCapRange {
+	if b == nil || len(b.zones) == 0 {
+		return nil
+	}
+	pkgIDs := make([]int, 0, len(b.zones))
+	for pkgID := range b.zones {
+		pkgIDs = append(pkgIDs, pkgID)
+	}
+	sort.Ints(pkgIDs)
+
+	out := make([]PackagePowerCapRange, 0, len(pkgIDs))
+	for _, pkgID := range pkgIDs {
+		zone := b.zones[pkgID]
+		current, _ := readUint(zone.powerCapPath)
+		maxCap, _ := readUint(zone.maxPowerPath)
+		out = append(out, PackagePowerCapRange{
+			PackageID:     pkgID,
+			CurrentMicroW: current,
+			MaxMicroWatt:  maxCap,
+		})
+	}
+	return out
 }
 
 type amdRAPLBackend struct {
@@ -181,10 +216,12 @@ func (b *amdRAPLBackend) ReadAll() []PackageRAPL {
 		if err == nil {
 			powerCapMicroW = uint64(capMilliW) * 1000
 		}
+		sampledAt := time.Now().UnixNano()
 		out = append(out, PackageRAPL{
 			PackageID:      pkgID,
 			EnergyMicroJ:   energyMicroJ,
 			PowerCapMicroW: powerCapMicroW,
+			SampledAtNano:  sampledAt,
 		})
 	}
 	return out
@@ -209,4 +246,31 @@ func (b *amdRAPLBackend) SetPowerCap(pkgID int, microWatt uint64) error {
 		return fmt.Errorf("set package %d power cap: %w", pkgID, err)
 	}
 	return nil
+}
+
+func (b *amdRAPLBackend) ReadControlRanges() []PackagePowerCapRange {
+	if b == nil || b.client == nil || len(b.socketByPkgID) == 0 {
+		return nil
+	}
+
+	pkgIDs := make([]int, 0, len(b.socketByPkgID))
+	for pkgID := range b.socketByPkgID {
+		pkgIDs = append(pkgIDs, pkgID)
+	}
+	sort.Ints(pkgIDs)
+
+	out := make([]PackagePowerCapRange, 0, len(pkgIDs))
+	for _, pkgID := range pkgIDs {
+		socketID := b.socketByPkgID[pkgID]
+		capMilliW, err := b.client.SocketPowerCap(socketID)
+		current := uint64(0)
+		if err == nil {
+			current = uint64(capMilliW) * 1000
+		}
+		out = append(out, PackagePowerCapRange{
+			PackageID:     pkgID,
+			CurrentMicroW: current,
+		})
+	}
+	return out
 }

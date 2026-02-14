@@ -19,6 +19,10 @@ func toPBModuleRegistration(v *Registration) *gpupb.ModuleRegistration {
 			MemoryTotalBytes:  s.MemoryTotalBytes,
 			PowerMinMilliwatt: s.PowerMinMilliWatt,
 			PowerMaxMilliwatt: s.PowerMaxMilliWatt,
+			SmClockMinMhz:     s.SMClockMinMHz,
+			SmClockMaxMhz:     s.SMClockMaxMHz,
+			MemClockMinMhz:    s.MemClockMinMHz,
+			MemClockMaxMhz:    s.MemClockMaxMHz,
 		})
 	}
 	for _, c := range v.Collectors {
@@ -53,6 +57,7 @@ func toPBFastMetrics(v *FastMetrics) *gpupb.FastMetrics {
 			MemClockMinMhz:      d.MemClockMinMHz,
 			MemClockMaxMhz:      d.MemClockMaxMHz,
 			PowerLimitMilliwatt: d.PowerLimitMilliW,
+			SampledAtUnixNano:   d.SampledAtNano,
 		})
 	}
 	return out

@@ -14,12 +14,13 @@ type Registration struct {
 }
 
 type InterfaceMetrics struct {
-	Name      string
-	IPs       []string
-	RxBytes   uint64
-	RxPackets uint64
-	TxBytes   uint64
-	TxPackets uint64
+	Name          string
+	IPs           []string
+	RxBytes       uint64
+	RxPackets     uint64
+	TxBytes       uint64
+	TxPackets     uint64
+	SampledAtNano int64
 }
 
 type Metrics struct {

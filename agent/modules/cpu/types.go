@@ -41,6 +41,7 @@ type Registration struct {
 	Collectors  []CollectorSpec
 	Controllers []ControllerSpec
 	Devices     []DeviceInfo
+	Controls    []PackageControlInfo
 }
 
 type DeviceInfo struct {
@@ -52,22 +53,42 @@ type DeviceInfo struct {
 	ThreadCount uint32
 }
 
+type PackageControlInfo struct {
+	PackageID          int
+	ScalingMinKHz      uint64
+	ScalingMaxKHz      uint64
+	ScalingHWMinKHz    uint64
+	ScalingHWMaxKHz    uint64
+	AvailableGovernors []string
+	CurrentGovernor    string
+	ScalingDriver      string
+	UncoreCurrentKHz   uint64
+	UncoreMinKHz       uint64
+	UncoreMaxKHz       uint64
+	PowerCapMicroW     uint64
+	PowerCapMinMicroW  uint64
+	PowerCapMaxMicroW  uint64
+}
+
 type CoreFastMetrics struct {
 	CoreID        int
 	Utilization   float64
 	ScalingCurKHz uint64
 	PackageID     int
+	SampledAtNano int64
 }
 
 type PackageRAPL struct {
 	PackageID      int
 	EnergyMicroJ   uint64
 	PowerCapMicroW uint64
+	SampledAtNano  int64
 }
 
 type PackageTemperature struct {
-	PackageID int
-	MilliC    uint32
+	PackageID     int
+	MilliC        uint32
+	SampledAtNano int64
 }
 
 type MediumMetrics struct {
@@ -83,6 +104,7 @@ type PerCoreConfig struct {
 	CurrentGovernor    string
 	ScalingDriver      string
 	PackageID          int
+	SampledAtNano      int64
 }
 
 type UncoreMetrics struct {
@@ -92,6 +114,7 @@ type UncoreMetrics struct {
 	MaxKHz        uint64
 	InitialMinKHz uint64
 	InitialMaxKHz uint64
+	SampledAtNano int64
 }
 
 type UltraMetrics struct {

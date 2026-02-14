@@ -124,6 +124,25 @@ func (h *wsHub) PublishMetrics(nodeID string, samples []api.MetricSample) {
 	}
 }
 
+func (h *wsHub) PublishNodeSnapshot(snapshot *pb.NodeSnapshot) {
+	if snapshot == nil {
+		return
+	}
+	msg := &pb.WSOutgoingMessage{
+		Type: "node",
+		Node: snapshot,
+	}
+	payload, err := proto.Marshal(msg)
+	if err != nil {
+		return
+	}
+	select {
+	case h.broadcast <- wsBroadcast{nodeID: snapshot.GetNodeId(), category: "", payload: payload}:
+	default:
+		h.droppedBroadcast.Add(1)
+	}
+}
+
 func (h *wsHub) SwapDropStats() (droppedBroadcast uint64, droppedSlowClients uint64) {
 	if h == nil {
 		return 0, 0
@@ -162,7 +181,7 @@ func (c *wsClient) match(nodeID, category string) bool {
 			return false
 		}
 	}
-	if len(c.categories) > 0 {
+	if category != "" && len(c.categories) > 0 {
 		if _, ok := c.categories[category]; !ok {
 			return false
 		}
@@ -266,6 +285,20 @@ func (s *Server) handleWSMetrics(w http.ResponseWriter, r *http.Request) {
 	select {
 	case client.send <- welcome:
 	default:
+	}
+	for _, snapshot := range s.store.ListNodeSnapshots() {
+		msg, err := proto.Marshal(&pb.WSOutgoingMessage{
+			Type: "node",
+			Node: toPBNodeSnapshot(snapshot),
+		})
+		if err != nil {
+			continue
+		}
+		select {
+		case client.send <- msg:
+		default:
+			break
+		}
 	}
 
 	go client.writePump()

@@ -1,0 +1,129 @@
+syntax = "proto3";
+
+package telemetry.module.cpu.v1;
+
+option go_package = "telemetry/agent/modules/cpu/pb;cpupb";
+
+message CollectorSpec {
+  string category = 1;
+  string interval = 2;
+}
+
+message ControllerSpec {
+  string type = 1;
+}
+
+message CpuDevice {
+  int32 package_id = 1;
+  repeated int32 core_ids = 2;
+  uint32 core_count = 3;
+  uint32 thread_count = 4;
+  string vendor = 5;
+  string model = 6;
+}
+
+message StaticInfo {
+  string vendor = 1;
+  string model = 2;
+  int32 packages = 3;
+  int32 physical_cores = 4;
+  int32 logical_cores = 5;
+  int32 threads_per_core = 6;
+  uint64 cpuinfo_min_khz = 7;
+  uint64 cpuinfo_max_khz = 8;
+  bool supports_intel_uncore = 9;
+  bool supports_rapl = 10;
+}
+
+message ModuleRegistration {
+  StaticInfo static = 1;
+  repeated CollectorSpec collectors = 2;
+  repeated ControllerSpec controllers = 3;
+  repeated CpuDevice devices = 4;
+  repeated PackageControl package_controls = 5;
+}
+
+message PackageControl {
+  int32 package_id = 1;
+  uint64 scaling_min_khz = 2;
+  uint64 scaling_max_khz = 3;
+  repeated string available_governors = 4;
+  string current_governor = 5;
+  string scaling_driver = 6;
+  uint64 uncore_current_khz = 7;
+  uint64 uncore_min_khz = 8;
+  uint64 uncore_max_khz = 9;
+  uint64 power_cap_micro_w = 10;
+  uint64 power_cap_min_micro_w = 11;
+  uint64 power_cap_max_micro_w = 12;
+}
+
+message CoreFastMetrics {
+  int32 core_id = 1;
+  double utilization = 2;
+  uint64 scaling_cur_khz = 3;
+  int32 package_id = 4;
+}
+
+message PackageRAPL {
+  int32 package_id = 1;
+  uint64 energy_micro_j = 2;
+  uint64 power_cap_micro_w = 3;
+}
+
+message PackageTemperature {
+  int32 package_id = 1;
+  uint32 milli_c = 2;
+}
+
+message MediumMetrics {
+  repeated CoreFastMetrics cores = 1;
+  repeated PackageTemperature temperatures = 2;
+}
+
+message PerCoreConfig {
+  int32 core_id = 1;
+  uint64 scaling_min_khz = 2;
+  uint64 scaling_max_khz = 3;
+  repeated string available_governors = 4;
+  string current_governor = 5;
+  string scaling_driver = 6;
+  int32 package_id = 7;
+}
+
+message UncoreMetrics {
+  int32 package_id = 1;
+  uint64 current_khz = 2;
+  uint64 min_khz = 3;
+  uint64 max_khz = 4;
+  uint64 initial_min_khz = 5;
+  uint64 initial_max_khz = 6;
+}
+
+message UltraMetrics {
+  repeated PerCoreConfig per_core = 1;
+  repeated PackageRAPL rapl = 2;
+  repeated UncoreMetrics uncore = 3;
+}
+
+message ScalingRangeCommand {
+  uint64 min_khz = 1;
+  uint64 max_khz = 2;
+  optional int32 package_id = 3;
+}
+
+message GovernorCommand {
+  string governor = 1;
+  optional int32 package_id = 2;
+}
+
+message UncoreRangeCommand {
+  int32 package_id = 1;
+  uint64 min_khz = 2;
+  uint64 max_khz = 3;
+}
+
+message PowerCapCommand {
+  int32 package_id = 1;
+  uint64 microwatt = 2;
+}

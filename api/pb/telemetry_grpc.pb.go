@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.4.0
 // - protoc             v3.21.12
-// source: internal/api/pb/telemetry.proto
+// source: api/pb/telemetry.proto
 
 package pb
 
@@ -138,5 +138,5 @@ var TelemetryService_ServiceDesc = grpc.ServiceDesc{
 			ClientStreams: true,
 		},
 	},
-	Metadata: "internal/api/pb/telemetry.proto",
+	Metadata: "api/pb/telemetry.proto",
 }

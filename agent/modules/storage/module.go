@@ -32,6 +32,7 @@ func (m *Module) Registration() any {
 			Category: string(Category),
 			Interval: m.intervals.Interval(string(Category), defaultInterval).String(),
 		}},
+		StaticDisks: m.collector.StaticDisks(),
 	})
 }
 

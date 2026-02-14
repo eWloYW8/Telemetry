@@ -31,13 +31,14 @@ func toPBMetrics(v *Metrics) *processpb.Metrics {
 	}
 	for _, p := range v.Processes {
 		out.Processes = append(out.Processes, &processpb.Info{
-			Pid:         int32(p.PID),
-			Ppid:        int32(p.PPID),
-			User:        p.User,
-			State:       p.State,
-			CpuPercent:  p.CPUPercent,
-			MemoryBytes: p.MemoryBytes,
-			Command:     p.Command,
+			Pid:               int32(p.PID),
+			Ppid:              int32(p.PPID),
+			User:              p.User,
+			State:             p.State,
+			CpuPercent:        p.CPUPercent,
+			MemoryBytes:       p.MemoryBytes,
+			Command:           p.Command,
+			SampledAtUnixNano: p.SampledAtNano,
 		})
 	}
 	return out

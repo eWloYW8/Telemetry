@@ -7,8 +7,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -27,21 +25,26 @@ const maxProtoPayloadBytes = 1 << 20
 func (s *Server) newRouter() http.Handler {
 	r := chi.NewRouter()
 	r.Use(s.httpLogMiddleware)
+	uiStatic := s.newUIStaticHandler()
 
-	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+	r.Get("/api/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeProto(w, http.StatusOK, &pb.HealthzResponse{Status: "ok", TimeUnixNano: time.Now().UnixNano()})
 	})
+	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/api/healthz", http.StatusTemporaryRedirect)
+	})
 
-	r.Route("/api/v1", func(r chi.Router) {
+	r.Route("/api", func(r chi.Router) {
 		r.Get("/nodes", s.handleListNodes)
 		r.Get("/nodes/{nodeID}", s.handleGetNode)
 		r.Get("/nodes/{nodeID}/modules", s.handleGetNodeModules)
-		r.Get("/nodes/{nodeID}/samples", s.handleGetSamples)
 		r.Get("/ws/metrics", s.handleWSMetrics)
 
 		r.Post("/nodes/{nodeID}/commands", s.handleDispatchCommand)
 		r.Post("/nodes/{nodeID}/commands/{commandType}", s.handleDispatchCommandByType)
 	})
+
+	r.Handle("/*", uiStatic)
 
 	return r
 }
@@ -104,9 +107,9 @@ func (s *Server) httpLogMiddleware(next http.Handler) http.Handler {
 			event.Error().Msg("http request")
 		case rec.status >= 400:
 			event.Warn().Msg("http request")
-		case r.URL.Path == "/healthz":
+		case r.URL.Path == "/api/healthz":
 			event.Debug().Msg("http request")
-		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/nodes/"):
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/nodes/"):
 			event.Info().Msg("http request")
 		default:
 			event.Debug().Msg("http request")
@@ -147,36 +150,6 @@ func (s *Server) handleGetNodeModules(w http.ResponseWriter, r *http.Request) {
 		modules = append(modules, regPB.GetModules()...)
 	}
 	writeProto(w, http.StatusOK, &pb.NodeModulesResponse{Modules: modules})
-}
-
-func (s *Server) handleGetSamples(w http.ResponseWriter, r *http.Request) {
-	nodeID := chi.URLParam(r, "nodeID")
-	since := int64(0)
-	if rawSince := r.URL.Query().Get("since"); rawSince != "" {
-		if v, err := strconv.ParseInt(rawSince, 10, 64); err == nil {
-			since = v
-		}
-	}
-	limit := 500
-	if rawLimit := r.URL.Query().Get("limit"); rawLimit != "" {
-		if v, err := strconv.Atoi(rawLimit); err == nil && v > 0 {
-			limit = v
-		}
-	}
-	category := r.URL.Query().Get("category")
-	samples, err := s.store.QuerySamples(nodeID, since, category, limit)
-	if err != nil {
-		writeError(w, http.StatusNotFound, err)
-		return
-	}
-
-	out := &pb.SamplesResponse{
-		Samples: make([]*pb.TimedSample, 0, len(samples)),
-	}
-	for _, sample := range samples {
-		out.Samples = append(out.Samples, toPBTimedSample(sample))
-	}
-	writeProto(w, http.StatusOK, out)
 }
 
 func (s *Server) handleDispatchCommand(w http.ResponseWriter, r *http.Request) {
@@ -337,46 +310,10 @@ func writeError(w http.ResponseWriter, code int, err error) {
 }
 
 func toPBNodeSnapshot(snapshot api.NodeSnapshot) *pb.NodeSnapshot {
-	out := &pb.NodeSnapshot{
+	return &pb.NodeSnapshot{
 		NodeId:           snapshot.NodeID,
 		Connected:        snapshot.Connected,
 		LastSeenUnixNano: snapshot.LastSeen,
 		Registration:     api.ToPBRegistration(snapshot.Registration),
-	}
-
-	if len(snapshot.Latest) == 0 {
-		return out
-	}
-
-	keys := make([]string, 0, len(snapshot.Latest))
-	for category := range snapshot.Latest {
-		keys = append(keys, category)
-	}
-	sort.Strings(keys)
-
-	out.Latest = make([]*pb.MetricSample, 0, len(keys))
-	for _, category := range keys {
-		timed := snapshot.Latest[category]
-		c := timed.Category
-		if c == "" {
-			c = api.MetricCategory(category)
-		}
-		out.Latest = append(out.Latest, api.ToPBMetricSample(api.MetricSample{
-			Category: c,
-			At:       timed.At,
-			Payload:  timed.Payload,
-		}))
-	}
-	return out
-}
-
-func toPBTimedSample(sample api.TimedSample) *pb.TimedSample {
-	return &pb.TimedSample{
-		NodeId: sample.NodeID,
-		Sample: api.ToPBMetricSample(api.MetricSample{
-			Category: sample.Category,
-			At:       sample.At,
-			Payload:  sample.Payload,
-		}),
 	}
 }

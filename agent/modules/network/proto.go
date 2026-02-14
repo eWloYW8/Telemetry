@@ -27,12 +27,13 @@ func toPBMetrics(v *Metrics) *networkpb.Metrics {
 	}
 	for _, iface := range v.Interfaces {
 		out.Interfaces = append(out.Interfaces, &networkpb.InterfaceMetrics{
-			Name:      iface.Name,
-			Ips:       append([]string(nil), iface.IPs...),
-			RxBytes:   iface.RxBytes,
-			RxPackets: iface.RxPackets,
-			TxBytes:   iface.TxBytes,
-			TxPackets: iface.TxPackets,
+			Name:              iface.Name,
+			Ips:               append([]string(nil), iface.IPs...),
+			RxBytes:           iface.RxBytes,
+			RxPackets:         iface.RxPackets,
+			TxBytes:           iface.TxBytes,
+			TxPackets:         iface.TxPackets,
+			SampledAtUnixNano: iface.SampledAtNano,
 		})
 	}
 	return out

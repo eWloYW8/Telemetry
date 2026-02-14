@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 type procSample struct {
@@ -78,13 +79,14 @@ func (p *Collector) Collect() (*Metrics, error) {
 		}
 
 		result = append(result, Info{
-			PID:         pid,
-			PPID:        sample.ppid,
-			User:        p.lookupUser(sample.uid),
-			State:       sample.state,
-			CPUPercent:  cpuPercent,
-			MemoryBytes: sample.rssPages * p.pageSize,
-			Command:     sample.command,
+			PID:           pid,
+			PPID:          sample.ppid,
+			User:          p.lookupUser(sample.uid),
+			State:         sample.state,
+			CPUPercent:    cpuPercent,
+			MemoryBytes:   sample.rssPages * p.pageSize,
+			Command:       sample.command,
+			SampledAtNano: time.Now().UnixNano(),
 		})
 	}
 

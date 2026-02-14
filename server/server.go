@@ -63,7 +63,7 @@ func New(cfg config.ServerConfig, logger zerolog.Logger) *Server {
 	return &Server{
 		cfg:      cfg,
 		log:      logger.With().Str("component", "server").Logger(),
-		store:    NewStore(cfg.Retention, cfg.MaxSamplesPerNode),
+		store:    NewStore(),
 		wsHub:    newWSHub(logger.With().Str("component", "server.ws").Logger()),
 		sessions: make(map[string]*nodeSession),
 		pending:  make(map[string]pendingEntry),
@@ -139,7 +139,6 @@ func (s *Server) ingestLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case item := <-s.ingestQ:
-			s.store.AddSamples(item.nodeID, item.samples)
 			s.wsHub.PublishMetrics(item.nodeID, item.samples)
 		}
 	}
@@ -167,6 +166,9 @@ func (s *Server) StreamTelemetry(stream pb.TelemetryService_StreamTelemetryServe
 	session := &nodeSession{nodeID: nodeID, cmdQ: make(chan *api.Command, s.cfg.PerNodeQueueSize)}
 	s.store.SetNodeRegistration(reg)
 	s.registerSession(session)
+	if snapshot, err := s.store.GetNodeSnapshot(nodeID); err == nil {
+		s.wsHub.PublishNodeSnapshot(toPBNodeSnapshot(snapshot))
+	}
 	defer s.unregisterSession(nodeID)
 
 	if err := stream.Send(api.ToPBServerMessage(&api.ServerMessage{
@@ -229,6 +231,9 @@ func (s *Server) handleAgentMessage(nodeID string, msg *api.AgentMessage) {
 	switch msg.Kind {
 	case api.MessageKindMetrics:
 		if msg.Metrics != nil {
+			if n := len(msg.Metrics.Samples); n > 0 {
+				s.store.TouchNode(nodeID, msg.Metrics.Samples[n-1].At)
+			}
 			select {
 			case s.ingestQ <- ingestItem{nodeID: nodeID, samples: msg.Metrics.Samples}:
 			default:
@@ -238,6 +243,9 @@ func (s *Server) handleAgentMessage(nodeID string, msg *api.AgentMessage) {
 	case api.MessageKindHeartbeat:
 		if msg.Heartbeat != nil {
 			s.store.TouchNode(nodeID, msg.Heartbeat.At)
+			if snapshot, err := s.store.GetNodeSnapshot(nodeID); err == nil {
+				s.wsHub.PublishNodeSnapshot(toPBNodeSnapshot(snapshot))
+			}
 		}
 	case api.MessageKindCommandResult:
 		if msg.Result != nil {
@@ -251,6 +259,9 @@ func (s *Server) registerSession(session *nodeSession) {
 	defer s.sessionsMu.Unlock()
 	s.sessions[session.nodeID] = session
 	s.store.SetNodeConnected(session.nodeID, true)
+	if snapshot, err := s.store.GetNodeSnapshot(session.nodeID); err == nil {
+		s.wsHub.PublishNodeSnapshot(toPBNodeSnapshot(snapshot))
+	}
 }
 
 func (s *Server) unregisterSession(nodeID string) {
@@ -259,6 +270,9 @@ func (s *Server) unregisterSession(nodeID string) {
 	s.sessionsMu.Unlock()
 	s.failPendingByNode(nodeID)
 	s.store.SetNodeConnected(nodeID, false)
+	if snapshot, err := s.store.GetNodeSnapshot(nodeID); err == nil {
+		s.wsHub.PublishNodeSnapshot(toPBNodeSnapshot(snapshot))
+	}
 }
 
 func (s *Server) getSession(nodeID string) (*nodeSession, bool) {

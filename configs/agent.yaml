@@ -5,16 +5,16 @@ send_queue_size: 4096
 control_timeout: 10s
 report:
   intervals:
-    cpu_ultra_fast: 100ms
-    cpu_medium: 1s
-    gpu_fast: 100ms
-    memory: 1s
-    storage: 5s
-    network: 5s
-    process: 5s
+    cpu_ultra_fast: 10ms
+    cpu_medium: 100ms
+    gpu_fast: 10ms
+    memory: 100ms
+    storage: 100ms
+    network: 100ms
+    process: 3s
   heartbeat: 2s
-  batch_flush: 100ms
-  max_per_batch: 64
+  batch_flush: 10ms
+  max_per_batch: 6400
 log:
   level: info
   format: console
