@@ -278,13 +278,16 @@ export function DashboardShell() {
   const cpuPowerMin = numField(powerControl, "powerCapMinMicroW", "power_cap_min_micro_w");
   const cpuPowerMax = numField(powerControl, "powerCapMaxMicroW", "power_cap_max_micro_w");
   const cpuPowerCurrent = numField(powerControl, "powerCapMicroW", "power_cap_micro_w");
-  const cpuPowerSliderMin = cpuPowerMin > 0 ? cpuPowerMin : 1_000_000;
-  const cpuPowerSliderMax = Math.max(
-    cpuPowerMax > 0 ? cpuPowerMax : 0,
-    cpuPowerCurrent > 0 ? cpuPowerCurrent : 0,
-    cpuPowerCap > 0 ? cpuPowerCap : 0,
-    400_000_000,
-  );
+  const cpuPowerSliderMax = useMemo(() => {
+    if (cpuPowerMax > 0) return cpuPowerMax;
+    if (cpuPowerCurrent > 0) return cpuPowerCurrent;
+    if (cpuPowerCap > 0) return cpuPowerCap;
+    return 400_000_000;
+  }, [cpuPowerMax, cpuPowerCurrent, cpuPowerCap]);
+  const cpuPowerSliderMin = useMemo(() => {
+    if (cpuPowerMin > 0 && cpuPowerMin <= cpuPowerSliderMax) return cpuPowerMin;
+    return Math.min(1_000_000, cpuPowerSliderMax);
+  }, [cpuPowerMin, cpuPowerSliderMax]);
   const cpuPowerSyncPackageRef = useRef<number>(-1);
   const cpuPowerSyncedRef = useRef(false);
 
@@ -322,12 +325,18 @@ export function DashboardShell() {
   const gpuDevicesFast = (gpuFastRaw?.devices ?? []) as Array<Record<string, any>>;
   const activeGPUFast =
     gpuDevicesFast.find((g) => numField(g, "index") === activeGPUIndex) ?? gpuDevicesFast[0] ?? null;
-  const gpuPowerMinBound = maxOr(numField(activeGPUStatic, "powerMinMilliwatt", "power_min_milliwatt"), 30_000);
-  const gpuPowerMaxBound = Math.max(
-    maxOr(numField(activeGPUStatic, "powerMaxMilliwatt", "power_max_milliwatt"), 450_000),
-    numField(activeGPUFast, "powerLimitMilliwatt", "power_limit_milliwatt"),
-    gpuPowerMinBound,
-  );
+  const gpuPowerMinRaw = numField(activeGPUStatic, "powerMinMilliwatt", "power_min_milliwatt");
+  const gpuPowerMaxRaw = numField(activeGPUStatic, "powerMaxMilliwatt", "power_max_milliwatt");
+  const gpuPowerCurrent = numField(activeGPUFast, "powerLimitMilliwatt", "power_limit_milliwatt");
+  const gpuPowerMinBound = useMemo(() => {
+    if (gpuPowerMinRaw > 0) return gpuPowerMinRaw;
+    return 30_000;
+  }, [gpuPowerMinRaw]);
+  const gpuPowerMaxBound = useMemo(() => {
+    if (gpuPowerMaxRaw > 0) return Math.max(gpuPowerMaxRaw, gpuPowerMinBound);
+    if (gpuPowerCurrent > 0) return Math.max(gpuPowerCurrent, gpuPowerMinBound);
+    return Math.max(450_000, gpuPowerMinBound);
+  }, [gpuPowerMaxRaw, gpuPowerCurrent, gpuPowerMinBound]);
   const gpuPowerSyncDeviceRef = useRef<number>(-1);
   const gpuPowerSyncedRef = useRef(false);
 
