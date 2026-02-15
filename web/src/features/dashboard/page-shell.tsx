@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Activity, Cpu, Gauge, HardDrive, MemoryStick, Network, Server, Thermometer } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -117,20 +117,18 @@ export function DashboardShell() {
   const { wsConnected, nodes, history } = useTelemetryWS();
 
   const [selectedNodeId, setSelectedNodeId] = useState("");
-  const [activeTab, setActiveTab] = useState<TabKey>("cpu");
+  const [activeTab, setActiveTab] = useState<TabKey>("memory");
 
   const [cmdPending, setCmdPending] = useState(false);
   const [cmdMsg, setCmdMsg] = useState("");
 
-  const [cpuPackageTarget, setCpuPackageTarget] = useState("all");
+  const [cpuDeviceTab, setCpuDeviceTab] = useState("0");
   const [cpuRange, setCpuRange] = useState<[number, number]>([1_200_000, 3_500_000]);
   const [cpuGovernor, setCpuGovernor] = useState("performance");
-  const [uncorePackage, setUncorePackage] = useState(0);
   const [uncoreRange, setUncoreRange] = useState<[number, number]>([1_200_000, 3_500_000]);
-  const [cpuPowerPackage, setCpuPowerPackage] = useState(0);
   const [cpuPowerCap, setCpuPowerCap] = useState(120_000_000);
 
-  const [gpuIndex, setGpuIndex] = useState(0);
+  const [gpuDeviceTab, setGpuDeviceTab] = useState("0");
   const [gpuSMRange, setGpuSMRange] = useState<[number, number]>([0, 0]);
   const [gpuMemRange, setGpuMemRange] = useState<[number, number]>([0, 0]);
   const [gpuPowerCap, setGpuPowerCap] = useState(120_000);
@@ -188,36 +186,30 @@ export function DashboardShell() {
   const historyByCategory = history[selectedNodeId] ?? {};
 
   const cpuPackageIds = useMemo(() => {
-    const ids = cpuControls
-      .map((c) => numField(c, "packageId", "package_id"))
-      .filter((v) => v >= 0);
+    const ids = [
+      ...cpuDevices.map((d) => numField(d, "packageId", "package_id")),
+      ...cpuControls.map((c) => numField(c, "packageId", "package_id")),
+    ].filter((v) => v >= 0);
     return Array.from(new Set(ids)).sort((a, b) => a - b);
-  }, [cpuControls]);
+  }, [cpuDevices, cpuControls]);
+
+  const activeCpuPackageID = useMemo(() => {
+    if (cpuPackageIds.length === 0) return -1;
+    const v = Number(cpuDeviceTab);
+    return cpuPackageIds.includes(v) ? v : cpuPackageIds[0];
+  }, [cpuPackageIds, cpuDeviceTab]);
+
+  const activeCpuDevice = useMemo(
+    () => cpuDevices.find((d) => numField(d, "packageId", "package_id") === activeCpuPackageID) ?? null,
+    [cpuDevices, activeCpuPackageID],
+  );
 
   const activeCpuControl = useMemo(() => {
-    if (cpuPackageIds.length === 0) return null;
-    if (cpuPackageTarget === "all") return cpuControls[0] ?? null;
-    return (
-      cpuControls.find((c) => numField(c, "packageId", "package_id") === Number(cpuPackageTarget)) ??
-      null
-    );
-  }, [cpuControls, cpuPackageIds, cpuPackageTarget]);
+    if (activeCpuPackageID < 0) return null;
+    return cpuControls.find((c) => numField(c, "packageId", "package_id") === activeCpuPackageID) ?? null;
+  }, [cpuControls, activeCpuPackageID]);
 
   const cpuScaleMinBound = useMemo(() => {
-    if (cpuPackageTarget === "all") {
-      const mins = cpuControls
-        .map((c) =>
-          numField(
-            c,
-            "scalingHwMinKhz",
-            "scaling_hw_min_khz",
-            "scalingMinKhz",
-            "scaling_min_khz",
-          ),
-        )
-        .filter((v) => v > 0);
-      return mins.length > 0 ? Math.min(...mins) : 800_000;
-    }
     return (
       numField(
         activeCpuControl,
@@ -227,23 +219,9 @@ export function DashboardShell() {
         "scaling_min_khz",
       ) || 800_000
     );
-  }, [cpuControls, cpuPackageTarget, activeCpuControl]);
+  }, [activeCpuControl]);
 
   const cpuScaleMaxBound = useMemo(() => {
-    if (cpuPackageTarget === "all") {
-      const maxs = cpuControls
-        .map((c) =>
-          numField(
-            c,
-            "scalingHwMaxKhz",
-            "scaling_hw_max_khz",
-            "scalingMaxKhz",
-            "scaling_max_khz",
-          ),
-        )
-        .filter((v) => v > 0);
-      return maxs.length > 0 ? Math.max(...maxs) : 5_000_000;
-    }
     return (
       numField(
         activeCpuControl,
@@ -253,20 +231,12 @@ export function DashboardShell() {
         "scaling_max_khz",
       ) || 5_000_000
     );
-  }, [cpuControls, cpuPackageTarget, activeCpuControl]);
+  }, [activeCpuControl]);
 
   const cpuGovernorOptions = useMemo(() => {
-    if (cpuPackageTarget === "all") {
-      const all = new Set<string>();
-      for (const c of cpuControls) {
-        const arr = (c.availableGovernors ?? c.available_governors ?? []) as string[];
-        for (const g of arr) all.add(g);
-      }
-      return all.size > 0 ? Array.from(all).sort() : ["performance", "powersave"];
-    }
     const arr = (activeCpuControl?.availableGovernors ?? activeCpuControl?.available_governors ?? []) as string[];
     return arr.length > 0 ? arr : ["performance", "powersave"];
-  }, [cpuControls, cpuPackageTarget, activeCpuControl]);
+  }, [activeCpuControl]);
 
   useEffect(() => {
     const lo = clamp(cpuRange[0], cpuScaleMinBound, cpuScaleMaxBound);
@@ -284,23 +254,13 @@ export function DashboardShell() {
   }, [cpuGovernorOptions, cpuGovernor]);
 
   useEffect(() => {
-    if (cpuPackageIds.length === 0) {
-      if (cpuPackageTarget !== "all") setCpuPackageTarget("all");
-      return;
+    if (cpuPackageIds.length === 0) return;
+    if (!cpuPackageIds.includes(Number(cpuDeviceTab))) {
+      setCpuDeviceTab(String(cpuPackageIds[0]));
     }
-    if (cpuPackageTarget !== "all" && !cpuPackageIds.includes(Number(cpuPackageTarget))) {
-      setCpuPackageTarget("all");
-    }
-  }, [cpuPackageIds, cpuPackageTarget]);
+  }, [cpuPackageIds, cpuDeviceTab]);
 
-  useEffect(() => {
-    if (cpuControls.length === 0) return;
-    const ids = cpuControls.map((c) => numField(c, "packageId", "package_id"));
-    if (!ids.includes(uncorePackage)) setUncorePackage(ids[0]);
-    if (!ids.includes(cpuPowerPackage)) setCpuPowerPackage(ids[0]);
-  }, [cpuControls, uncorePackage, cpuPowerPackage]);
-
-  const uncoreControl = cpuControls.find((c) => numField(c, "packageId", "package_id") === uncorePackage) ?? null;
+  const uncoreControl = activeCpuControl;
   const uncoreMin = numField(uncoreControl, "uncoreMinKhz", "uncore_min_khz");
   const uncoreMax = numField(uncoreControl, "uncoreMaxKhz", "uncore_max_khz");
 
@@ -314,28 +274,81 @@ export function DashboardShell() {
     }
   }, [uncoreMin, uncoreMax, uncoreRange]);
 
-  const powerControl = cpuControls.find((c) => numField(c, "packageId", "package_id") === cpuPowerPackage) ?? null;
+  const powerControl = activeCpuControl;
   const cpuPowerMin = numField(powerControl, "powerCapMinMicroW", "power_cap_min_micro_w");
   const cpuPowerMax = numField(powerControl, "powerCapMaxMicroW", "power_cap_max_micro_w");
+  const cpuPowerCurrent = numField(powerControl, "powerCapMicroW", "power_cap_micro_w");
+  const cpuPowerSliderMin = cpuPowerMin > 0 ? cpuPowerMin : 1_000_000;
+  const cpuPowerSliderMax = Math.max(
+    cpuPowerMax > 0 ? cpuPowerMax : 0,
+    cpuPowerCurrent > 0 ? cpuPowerCurrent : 0,
+    cpuPowerCap > 0 ? cpuPowerCap : 0,
+    400_000_000,
+  );
 
   useEffect(() => {
-    const current = numField(powerControl, "powerCapMicroW", "power_cap_micro_w");
-    if (cpuPowerCap <= 0 && current > 0) {
-      setCpuPowerCap(current);
+    if (!powerControl) return;
+    if (cpuPowerCurrent > 0) {
+      const next = clamp(cpuPowerCurrent, cpuPowerSliderMin, cpuPowerSliderMax);
+      if (Math.abs(next - cpuPowerCap) > 1) {
+        setCpuPowerCap(next);
+      }
     }
-  }, [powerControl, cpuPowerCap]);
+  }, [powerControl, cpuPowerCurrent, cpuPowerSliderMin, cpuPowerSliderMax, cpuPowerCap]);
 
   const gpuIndexes = gpuStatic.map((g) => numField(g, "index"));
-  const activeGPUStatic = gpuStatic.find((g) => numField(g, "index") === gpuIndex) ?? gpuStatic[0] ?? null;
+  const activeGPUIndex = useMemo(() => {
+    if (gpuIndexes.length === 0) return -1;
+    const v = Number(gpuDeviceTab);
+    return gpuIndexes.includes(v) ? v : gpuIndexes[0];
+  }, [gpuIndexes, gpuDeviceTab]);
+  const activeGPUStatic = gpuStatic.find((g) => numField(g, "index") === activeGPUIndex) ?? gpuStatic[0] ?? null;
 
   const gpuDevicesFast = (gpuFastRaw?.devices ?? []) as Array<Record<string, any>>;
   const activeGPUFast =
-    gpuDevicesFast.find((g) => numField(g, "index") === gpuIndex) ?? gpuDevicesFast[0] ?? null;
+    gpuDevicesFast.find((g) => numField(g, "index") === activeGPUIndex) ?? gpuDevicesFast[0] ?? null;
+  const gpuPowerMinBound = maxOr(numField(activeGPUStatic, "powerMinMilliwatt", "power_min_milliwatt"), 30_000);
+  const gpuPowerMaxBound = Math.max(
+    maxOr(numField(activeGPUStatic, "powerMaxMilliwatt", "power_max_milliwatt"), 450_000),
+    numField(activeGPUFast, "powerLimitMilliwatt", "power_limit_milliwatt"),
+    gpuPowerMinBound,
+  );
+  const gpuPowerSyncDeviceRef = useRef<number>(-1);
+  const gpuPowerSyncedRef = useRef(false);
 
   useEffect(() => {
     if (gpuIndexes.length === 0) return;
-    if (!gpuIndexes.includes(gpuIndex)) setGpuIndex(gpuIndexes[0]);
-  }, [gpuIndexes, gpuIndex]);
+    if (!gpuIndexes.includes(Number(gpuDeviceTab))) setGpuDeviceTab(String(gpuIndexes[0]));
+  }, [gpuIndexes, gpuDeviceTab]);
+
+  const topTabValues = useMemo(() => {
+    const values: string[] = [];
+    for (const pkg of cpuPackageIds) values.push(`cpu:${pkg}`);
+    for (const idx of gpuIndexes) values.push(`gpu:${idx}`);
+    values.push("memory", "storage", "network", "process");
+    return values;
+  }, [cpuPackageIds, gpuIndexes]);
+
+  useEffect(() => {
+    if (topTabValues.length === 0) {
+      if (activeTab !== "") setActiveTab("");
+      return;
+    }
+    if (!topTabValues.includes(activeTab)) {
+      setActiveTab(topTabValues[0]);
+    }
+  }, [topTabValues, activeTab]);
+
+  useEffect(() => {
+    if (activeTab.startsWith("cpu:") && activeCpuPackageID >= 0) {
+      const key = `cpu:${activeCpuPackageID}`;
+      if (activeTab !== key) setActiveTab(key);
+    }
+    if (activeTab.startsWith("gpu:") && activeGPUIndex >= 0) {
+      const key = `gpu:${activeGPUIndex}`;
+      if (activeTab !== key) setActiveTab(key);
+    }
+  }, [activeTab, activeCpuPackageID, activeGPUIndex]);
 
   useEffect(() => {
     if (!activeGPUStatic) return;
@@ -356,15 +369,31 @@ export function DashboardShell() {
       const next: [number, number] = [Math.min(lo, hi), Math.max(lo, hi)];
       if (next[0] !== gpuMemRange[0] || next[1] !== gpuMemRange[1]) setGpuMemRange(next);
     }
+  }, [activeGPUStatic, gpuSMRange, gpuMemRange]);
 
-    const powerMin = numField(activeGPUStatic, "powerMinMilliwatt", "power_min_milliwatt") || 30_000;
-    const powerMax = numField(activeGPUStatic, "powerMaxMilliwatt", "power_max_milliwatt") || 450_000;
-    const powerCurrent = numField(activeGPUFast, "powerLimitMilliwatt", "power_limit_milliwatt") || gpuPowerCap;
-    const nextPower = clamp(powerCurrent, powerMin, powerMax);
-    if (nextPower !== gpuPowerCap) {
-      setGpuPowerCap(nextPower);
+  useEffect(() => {
+    if (activeGPUIndex < 0) return;
+    if (gpuPowerSyncDeviceRef.current !== activeGPUIndex) {
+      gpuPowerSyncDeviceRef.current = activeGPUIndex;
+      gpuPowerSyncedRef.current = false;
+      setGpuPowerCap((prev) => clamp(prev || gpuPowerMinBound, gpuPowerMinBound, gpuPowerMaxBound));
     }
-  }, [activeGPUStatic, activeGPUFast, gpuSMRange, gpuMemRange, gpuPowerCap]);
+  }, [activeGPUIndex, gpuPowerMinBound, gpuPowerMaxBound]);
+
+  useEffect(() => {
+    if (activeGPUIndex < 0 || gpuPowerSyncedRef.current) return;
+    const current = numField(activeGPUFast, "powerLimitMilliwatt", "power_limit_milliwatt");
+    if (current <= 0) return;
+    gpuPowerSyncedRef.current = true;
+    setGpuPowerCap(clamp(current, gpuPowerMinBound, gpuPowerMaxBound));
+  }, [activeGPUIndex, activeGPUFast, gpuPowerMinBound, gpuPowerMaxBound]);
+
+  useEffect(() => {
+    setGpuPowerCap((prev) => {
+      const next = clamp(prev, gpuPowerMinBound, gpuPowerMaxBound);
+      return Math.abs(next - prev) > 1 ? next : prev;
+    });
+  }, [gpuPowerMinBound, gpuPowerMaxBound]);
 
   const tempByPackage = useMemo(() => {
     const map = new Map<number, number>();
@@ -393,6 +422,7 @@ export function DashboardShell() {
 
   const cpuCoreRows = useMemo<CpuCoreDenseRow[]>(() => {
     return cpuCores
+      .filter((core) => numField(core, "packageId", "package_id") === activeCpuPackageID)
       .map((core) => {
         const packageId = numField(core, "packageId", "package_id");
         const dyn = dynamicPerCoreConfigByPackage.get(packageId) ?? null;
@@ -418,7 +448,7 @@ export function DashboardShell() {
         };
       })
       .sort((a, b) => (a.packageId === b.packageId ? a.coreId - b.coreId : a.packageId - b.packageId));
-  }, [cpuCores, dynamicPerCoreConfigByPackage, staticControlByPackage, tempByPackage]);
+  }, [cpuCores, dynamicPerCoreConfigByPackage, staticControlByPackage, tempByPackage, activeCpuPackageID]);
 
   const sendCommand = async (commandType: string, payload: Record<string, unknown>) => {
     if (!selectedNodeId) return;
@@ -440,36 +470,40 @@ export function DashboardShell() {
     return list.map((item) => {
       const payload = item.sample.cpuMediumMetrics ?? item.sample.cpu_medium_metrics ?? {};
       const cores = (payload.cores ?? []) as Array<Record<string, any>>;
-      const utilAvg = cores.length > 0
-        ? cores.reduce((acc, c) => acc + numField(c, "utilization") * 100, 0) / cores.length
+      const perPkg = cores.filter((c) => numField(c, "packageId", "package_id") === activeCpuPackageID);
+      const utilAvg = perPkg.length > 0
+        ? perPkg.reduce((acc, c) => acc + numField(c, "utilization") * 100, 0) / perPkg.length
         : 0;
-      return { time: nsToTimeLabel(item.atNs), utilPct: utilAvg };
+      return { tsNs: item.atNs.toString(), time: nsToTimeLabel(item.atNs), utilPct: utilAvg };
     });
-  }, [historyByCategory.cpu_medium]);
+  }, [historyByCategory.cpu_medium, activeCpuPackageID]);
 
   const cpuFreqSeries = useMemo(() => {
     const list = historyByCategory.cpu_medium ?? [];
     return list.map((item) => {
       const payload = item.sample.cpuMediumMetrics ?? item.sample.cpu_medium_metrics ?? {};
       const cores = (payload.cores ?? []) as Array<Record<string, any>>;
-      const avgMHz = cores.length > 0
-        ? cores.reduce((acc, c) => acc + numField(c, "scalingCurKhz", "scaling_cur_khz"), 0) / cores.length / 1000
+      const perPkg = cores.filter((c) => numField(c, "packageId", "package_id") === activeCpuPackageID);
+      const avgMHz = perPkg.length > 0
+        ? perPkg.reduce((acc, c) => acc + numField(c, "scalingCurKhz", "scaling_cur_khz"), 0) / perPkg.length / 1000
         : 0;
-      return { time: nsToTimeLabel(item.atNs), avgMHz };
+      return { tsNs: item.atNs.toString(), time: nsToTimeLabel(item.atNs), avgMHz };
     });
-  }, [historyByCategory.cpu_medium]);
+  }, [historyByCategory.cpu_medium, activeCpuPackageID]);
 
   const cpuTempSeries = useMemo(() => {
     const list = historyByCategory.cpu_medium ?? [];
     return list.map((item) => {
       const payload = item.sample.cpuMediumMetrics ?? item.sample.cpu_medium_metrics ?? {};
       const temps = (payload.temperatures ?? []) as Array<Record<string, any>>;
-      const avgC = temps.length > 0
-        ? temps.reduce((acc, t) => acc + numField(t, "milliC", "milli_c") / 1000, 0) / temps.length
-        : 0;
-      return { time: nsToTimeLabel(item.atNs), tempC: avgC };
+      const temp = temps.find((t) => numField(t, "packageId", "package_id") === activeCpuPackageID) ?? null;
+      return {
+        tsNs: item.atNs.toString(),
+        time: nsToTimeLabel(item.atNs),
+        tempC: numField(temp, "milliC", "milli_c") / 1000,
+      };
     });
-  }, [historyByCategory.cpu_medium]);
+  }, [historyByCategory.cpu_medium, activeCpuPackageID]);
 
   const cpuPowerSeries = useMemo(() => {
     const list = historyByCategory.cpu_ultra_fast ?? [];
@@ -485,61 +519,61 @@ export function DashboardShell() {
         prevByPkg.set(numField(p, "packageId", "package_id"), p);
       }
 
-      let totalPowerW = 0;
-      for (const c of curRapl) {
-        const pkg = numField(c, "packageId", "package_id");
-        const p = prevByPkg.get(pkg);
-        if (!p) continue;
-        const curEnergy = numField(c, "energyMicroJ", "energy_micro_j");
-        const prevEnergy = numField(p, "energyMicroJ", "energy_micro_j");
-        const curTs = sampledAtNs(c, cur.atNs);
-        const prevTs = sampledAtNs(p, prev.atNs);
+      const curPkg = curRapl.find((c) => numField(c, "packageId", "package_id") === activeCpuPackageID);
+      const prevPkg = curPkg ? prevByPkg.get(activeCpuPackageID) : null;
+      let powerW = 0;
+      if (curPkg && prevPkg) {
+        const curEnergy = numField(curPkg, "energyMicroJ", "energy_micro_j");
+        const prevEnergy = numField(prevPkg, "energyMicroJ", "energy_micro_j");
+        const curTs = sampledAtNs(curPkg, cur.atNs);
+        const prevTs = sampledAtNs(prevPkg, prev.atNs);
         const rate = deltaRate(curEnergy, prevEnergy, curTs, prevTs);
-        if (rate === null) continue;
-        totalPowerW += rate / 1_000_000;
+        if (rate !== null) powerW = rate / 1_000_000;
       }
 
-      rows.push({ time: nsToTimeLabel(cur.atNs), powerW: totalPowerW });
+      rows.push({ tsNs: cur.atNs.toString(), time: nsToTimeLabel(cur.atNs), powerW });
     }
     return rows;
-  }, [historyByCategory.cpu_ultra_fast]);
+  }, [historyByCategory.cpu_ultra_fast, activeCpuPackageID]);
 
   const gpuUtilSeries = useMemo(() => {
     const list = historyByCategory.gpu_fast ?? [];
     return list.map((item) => {
       const devices = ((item.sample.gpuFastMetrics ?? item.sample.gpu_fast_metrics ?? {}).devices ?? []) as Array<Record<string, any>>;
-      const n = devices.length || 1;
-      const gpuUtil = devices.reduce((acc, d) => acc + numField(d, "utilizationGpu", "utilization_gpu"), 0) / n;
-      const memUtil = devices.reduce((acc, d) => acc + numField(d, "utilizationMem", "utilization_mem"), 0) / n;
-      return { time: nsToTimeLabel(item.atNs), gpuUtilPct: gpuUtil, memUtilPct: memUtil };
+      const dev = devices.find((d) => numField(d, "index") === activeGPUIndex) ?? null;
+      const gpuUtil = numField(dev, "utilizationGpu", "utilization_gpu");
+      const memUtil = numField(dev, "utilizationMem", "utilization_mem");
+      return { tsNs: item.atNs.toString(), time: nsToTimeLabel(item.atNs), gpuUtilPct: gpuUtil, memUtilPct: memUtil };
     });
-  }, [historyByCategory.gpu_fast]);
+  }, [historyByCategory.gpu_fast, activeGPUIndex]);
 
   const gpuPowerSeries = useMemo(() => {
     const list = historyByCategory.gpu_fast ?? [];
     return list.map((item) => {
       const devices = ((item.sample.gpuFastMetrics ?? item.sample.gpu_fast_metrics ?? {}).devices ?? []) as Array<Record<string, any>>;
-      const powerW = devices.reduce((acc, d) => acc + numField(d, "powerUsageMilliwatt", "power_usage_milliwatt"), 0) / 1000;
-      return { time: nsToTimeLabel(item.atNs), powerW };
+      const dev = devices.find((d) => numField(d, "index") === activeGPUIndex) ?? null;
+      const powerW = numField(dev, "powerUsageMilliwatt", "power_usage_milliwatt") / 1000;
+      return { tsNs: item.atNs.toString(), time: nsToTimeLabel(item.atNs), powerW };
     });
-  }, [historyByCategory.gpu_fast]);
+  }, [historyByCategory.gpu_fast, activeGPUIndex]);
 
   const gpuClockSeries = useMemo(() => {
     const list = historyByCategory.gpu_fast ?? [];
     return list.map((item) => {
       const devices = ((item.sample.gpuFastMetrics ?? item.sample.gpu_fast_metrics ?? {}).devices ?? []) as Array<Record<string, any>>;
-      const n = devices.length || 1;
-      const smMHz = devices.reduce((acc, d) => acc + numField(d, "graphicsClockMhz", "graphics_clock_mhz"), 0) / n;
-      const memMHz = devices.reduce((acc, d) => acc + numField(d, "memoryClockMhz", "memory_clock_mhz"), 0) / n;
-      return { time: nsToTimeLabel(item.atNs), smMHz, memMHz };
+      const dev = devices.find((d) => numField(d, "index") === activeGPUIndex) ?? null;
+      const smMHz = numField(dev, "graphicsClockMhz", "graphics_clock_mhz");
+      const memMHz = numField(dev, "memoryClockMhz", "memory_clock_mhz");
+      return { tsNs: item.atNs.toString(), time: nsToTimeLabel(item.atNs), smMHz, memMHz };
     });
-  }, [historyByCategory.gpu_fast]);
+  }, [historyByCategory.gpu_fast, activeGPUIndex]);
 
   const memorySeries = useMemo(() => {
     const list = historyByCategory.memory ?? [];
     return list.map((item) => {
       const m = item.sample.memoryMetrics ?? item.sample.memory_metrics ?? {};
       return {
+        tsNs: item.atNs.toString(),
         time: nsToTimeLabel(item.atNs),
         usedGB: numField(m, "usedBytes", "used_bytes") / 1024 / 1024 / 1024,
         cachedGB: numField(m, "cachedBytes", "cached_bytes") / 1024 / 1024 / 1024,
@@ -586,6 +620,7 @@ export function DashboardShell() {
       }
 
       rows.push({
+        tsNs: cur.atNs.toString(),
         time: nsToTimeLabel(cur.atNs),
         rxMBps: rxBpsTotal / 1024 / 1024,
         txMBps: txBpsTotal / 1024 / 1024,
@@ -632,6 +667,7 @@ export function DashboardShell() {
       }
 
       rows.push({
+        tsNs: cur.atNs.toString(),
         time: nsToTimeLabel(cur.atNs),
         readMBps: readBpsTotal / 1024 / 1024,
         writeMBps: writeBpsTotal / 1024 / 1024,
@@ -677,25 +713,30 @@ export function DashboardShell() {
         if (writeRate !== null) writeIops += writeRate;
       }
 
-      rows.push({ time: nsToTimeLabel(cur.atNs), readIOPS: readIops, writeIOPS: writeIops });
+      rows.push({ tsNs: cur.atNs.toString(), time: nsToTimeLabel(cur.atNs), readIOPS: readIops, writeIOPS: writeIops });
     }
     return rows;
   }, [historyByCategory.storage]);
 
   const cpuPowerMaxBound = useMemo(() => {
-    const capW = cpuControls.reduce((acc, c) => {
-      const v = numField(c, "powerCapMaxMicroW", "power_cap_max_micro_w");
-      return acc + (v > 0 ? v / 1_000_000 : 0);
-    }, 0);
+    const capW = numField(activeCpuControl, "powerCapMaxMicroW", "power_cap_max_micro_w") / 1_000_000;
     if (capW > 0) return capW;
     const sampleMax = cpuPowerSeries.reduce((acc, row) => Math.max(acc, numField(row, "powerW")), 0);
     return Math.max(sampleMax, 1);
-  }, [cpuControls, cpuPowerSeries]);
+  }, [activeCpuControl, cpuPowerSeries]);
 
   const cpuTempMaxBound = useMemo(() => {
     const sampleMax = cpuTempSeries.reduce((acc, row) => Math.max(acc, numField(row, "tempC")), 0);
     return Math.max(100, sampleMax * 1.1);
   }, [cpuTempSeries]);
+
+  const activeCpuRapl = useMemo(
+    () => cpuRapl.find((r) => numField(r, "packageId", "package_id") === activeCpuPackageID) ?? null,
+    [cpuRapl, activeCpuPackageID],
+  );
+
+  const cpuChartSuffix = `${selectedNodeId || "node"}-pkg${activeCpuPackageID}`;
+  const gpuChartSuffix = `${selectedNodeId || "node"}-gpu${activeGPUIndex}`;
 
   const processRows = useMemo<ProcessRow[]>(() => {
     const rows = processRowsRaw.map((p) => ({
@@ -738,6 +779,19 @@ export function DashboardShell() {
     }
     setProcSortKey(key);
     setProcSortDir(key === "command" || key === "user" || key === "state" ? "asc" : "desc");
+  };
+
+  const onChangeTopTab = (value: string) => {
+    setActiveTab(value);
+    if (value.startsWith("cpu:")) {
+      const pkg = value.slice(4);
+      if (pkg) setCpuDeviceTab(pkg);
+      return;
+    }
+    if (value.startsWith("gpu:")) {
+      const idx = value.slice(4);
+      if (idx) setGpuDeviceTab(idx);
+    }
   };
 
   return (
@@ -785,363 +839,277 @@ export function DashboardShell() {
               </div>
             </Section>
 
-            <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabKey)}>
-              <TabsList className="grid w-full grid-cols-6 bg-white">
-                <TabsTrigger value="cpu" className="text-xs"><Cpu className="h-4 w-4" /> CPU</TabsTrigger>
-                <TabsTrigger value="gpu" className="text-xs"><Gauge className="h-4 w-4" /> GPU</TabsTrigger>
+            <Tabs value={activeTab} onValueChange={onChangeTopTab}>
+              <TabsList className="flex w-full flex-wrap gap-1 bg-white p-1">
+                {cpuPackageIds.map((pkg) => (
+                  <TabsTrigger key={`top-cpu-${pkg}`} value={`cpu:${pkg}`} className="text-xs">
+                    <Cpu className="h-4 w-4" /> CPU {pkg}
+                  </TabsTrigger>
+                ))}
+                {gpuIndexes.map((idx) => (
+                  <TabsTrigger key={`top-gpu-${idx}`} value={`gpu:${idx}`} className="text-xs">
+                    <Gauge className="h-4 w-4" /> GPU {idx}
+                  </TabsTrigger>
+                ))}
                 <TabsTrigger value="memory" className="text-xs"><MemoryStick className="h-4 w-4" /> Memory</TabsTrigger>
                 <TabsTrigger value="storage" className="text-xs"><HardDrive className="h-4 w-4" /> Storage</TabsTrigger>
                 <TabsTrigger value="network" className="text-xs"><Network className="h-4 w-4" /> Network</TabsTrigger>
                 <TabsTrigger value="process" className="text-xs"><Activity className="h-4 w-4" /> Process</TabsTrigger>
               </TabsList>
 
-              <TabsContent value="cpu" className="mt-3 space-y-3">
-                <Section title="CPU Static" icon={<Cpu className="h-4 w-4" />}>
-                  <div className="grid gap-2 md:grid-cols-3">
-                    <StatRow name="Vendor" value={strField(cpuStatic, "vendor") || "-"} />
-                    <StatRow name="Model" value={strField(cpuStatic, "model") || "-"} />
-                    <StatRow name="Packages" value={numField(cpuStatic, "packages")} />
-                    <StatRow name="Physical Cores" value={numField(cpuStatic, "physicalCores", "physical_cores")} />
-                    <StatRow name="Logical Cores" value={numField(cpuStatic, "logicalCores", "logical_cores")} />
-                    <StatRow name="Threads/Core" value={numField(cpuStatic, "threadsPerCore", "threads_per_core")} />
-                    <StatRow name="CPU Min" value={formatKHz(numField(cpuStatic, "cpuinfoMinKhz", "cpuinfo_min_khz"))} />
-                    <StatRow name="CPU Max" value={formatKHz(numField(cpuStatic, "cpuinfoMaxKhz", "cpuinfo_max_khz"))} />
-                    <StatRow
-                      name="Capabilities"
-                      value={`RAPL=${numField(cpuStatic, "supportsRapl", "supports_rapl") ? "yes" : "no"}, Uncore=${numField(cpuStatic, "supportsIntelUncore", "supports_intel_uncore") ? "yes" : "no"}`}
-                    />
-                  </div>
+              <TabsContent value={`cpu:${activeCpuPackageID}`} className="mt-3 space-y-3">
+                {activeCpuPackageID < 0 ? (
+                  <Section title="CPU Device" icon={<Cpu className="h-4 w-4" />}>
+                    <div className="text-sm text-slate-500">No CPU package discovered.</div>
+                  </Section>
+                ) : (
+                  <>
+                    <Section title={`CPU ${activeCpuPackageID} Static`} icon={<Cpu className="h-4 w-4" />}>
+                      <div className="grid gap-2 md:grid-cols-2">
+                        <StatRow name="Vendor" value={strField(activeCpuDevice, "vendor") || strField(cpuStatic, "vendor") || "-"} />
+                        <StatRow name="Model" value={strField(activeCpuDevice, "model") || strField(cpuStatic, "model") || "-"} />
+                        <StatRow name="Core Count" value={numField(activeCpuDevice, "coreCount", "core_count")} />
+                        <StatRow name="Thread Count" value={numField(activeCpuDevice, "threadCount", "thread_count")} />
+                        <StatRow name="Threads/Core" value={numField(cpuStatic, "threadsPerCore", "threads_per_core")} />
+                        <StatRow name="Scale HW Min" value={formatKHz(numField(activeCpuControl, "scalingHwMinKhz", "scaling_hw_min_khz"))} />
+                        <StatRow name="Scale HW Max" value={formatKHz(numField(activeCpuControl, "scalingHwMaxKhz", "scaling_hw_max_khz"))} />
+                        <StatRow name="Core IDs" value={((activeCpuDevice?.coreIds ?? activeCpuDevice?.core_ids ?? []) as number[]).join(", ") || "-"} />
+                      </div>
+                    </Section>
 
-                  <div className="mt-3 overflow-x-auto">
-                    <table className="w-full min-w-[760px] text-xs">
-                      <thead className="bg-slate-50">
-                        <tr>
-                          <th className="border border-slate-200 px-2 py-1 text-left">Package</th>
-                          <th className="border border-slate-200 px-2 py-1 text-left">Vendor</th>
-                          <th className="border border-slate-200 px-2 py-1 text-left">Model</th>
-                          <th className="border border-slate-200 px-2 py-1 text-left">Core IDs</th>
-                          <th className="border border-slate-200 px-2 py-1 text-left">Core Count</th>
-                          <th className="border border-slate-200 px-2 py-1 text-left">Thread Count</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {cpuDevices.map((d, idx) => (
-                          <tr key={`${numField(d, "packageId", "package_id")}-${idx}`}>
-                            <td className="border border-slate-200 px-2 py-1">{numField(d, "packageId", "package_id")}</td>
-                            <td className="border border-slate-200 px-2 py-1">{strField(d, "vendor") || "-"}</td>
-                            <td className="border border-slate-200 px-2 py-1">{strField(d, "model") || "-"}</td>
-                            <td className="border border-slate-200 px-2 py-1">{((d.coreIds ?? d.core_ids ?? []) as number[]).join(", ") || "-"}</td>
-                            <td className="border border-slate-200 px-2 py-1">{numField(d, "coreCount", "core_count")}</td>
-                            <td className="border border-slate-200 px-2 py-1">{numField(d, "threadCount", "thread_count")}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </Section>
+                    <Section title={`CPU ${activeCpuPackageID} Controls`} icon={<Thermometer className="h-4 w-4" />}>
+                      <div className="grid gap-3 lg:grid-cols-2">
+                        <div className="space-y-3 border border-slate-200 p-3">
+                          <div className="text-sm font-medium">Scaling and Governor</div>
+                          <div>
+                            <div className="mb-1 text-xs text-slate-500">Scaling Range {formatKHz(cpuRange[0])} ~ {formatKHz(cpuRange[1])}</div>
+                            <Slider
+                              min={cpuScaleMinBound}
+                              max={cpuScaleMaxBound}
+                              step={1000}
+                              value={cpuRange}
+                              onValueChange={(v) => setCpuRange([v[0] ?? cpuRange[0], v[1] ?? cpuRange[1]])}
+                            />
+                          </div>
 
-                <Section title="CPU Controls" icon={<Thermometer className="h-4 w-4" />}>
-                  <div className="grid gap-3 lg:grid-cols-2">
-                    <div className="space-y-3 border border-slate-200 p-3">
-                      <div className="text-sm font-medium">Scaling and Governor</div>
-                      <div>
-                        <div className="mb-1 text-xs text-slate-500">Package</div>
-                        <Select value={cpuPackageTarget} onValueChange={setCpuPackageTarget}>
-                          <SelectTrigger><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="all">All Packages</SelectItem>
-                            {cpuPackageIds.map((pkg) => (
-                              <SelectItem key={pkg} value={String(pkg)}>Package {pkg}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                          <div>
+                            <div className="mb-1 text-xs text-slate-500">Governor</div>
+                            <Select value={cpuGovernor} onValueChange={setCpuGovernor}>
+                              <SelectTrigger><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                {cpuGovernorOptions.map((g) => (
+                                  <SelectItem key={g} value={g}>{g}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          <div className="flex gap-2">
+                            <Button
+                              disabled={cmdPending}
+                              onClick={() =>
+                                sendCommand("cpu_scaling_range", {
+                                  packageId: activeCpuPackageID,
+                                  minKhz: Math.round(cpuRange[0]),
+                                  maxKhz: Math.round(cpuRange[1]),
+                                })
+                              }
+                            >
+                              Apply Frequency
+                            </Button>
+                            <Button
+                              variant="outline"
+                              disabled={cmdPending}
+                              onClick={() =>
+                                sendCommand("cpu_governor", {
+                                  packageId: activeCpuPackageID,
+                                  governor: cpuGovernor,
+                                })
+                              }
+                            >
+                              Apply Governor
+                            </Button>
+                          </div>
+                        </div>
+
+                        <div className="space-y-3 border border-slate-200 p-3">
+                          <div className="text-sm font-medium">Uncore and RAPL</div>
+                          <div>
+                            <div className="mb-1 text-xs text-slate-500">Uncore Range {formatKHz(uncoreRange[0])} ~ {formatKHz(uncoreRange[1])}</div>
+                            <Slider
+                              min={maxOr(uncoreMin, 1)}
+                              max={maxOr(uncoreMax, 1)}
+                              step={1000}
+                              value={uncoreRange}
+                              onValueChange={(v) => setUncoreRange([v[0] ?? uncoreRange[0], v[1] ?? uncoreRange[1]])}
+                              disabled={uncoreMin <= 0 || uncoreMax <= 0 || uncoreMax < uncoreMin}
+                            />
+                          </div>
+
+                          <div>
+                            <div className="mb-1 text-xs text-slate-500">Power Cap {formatPowerMicroW(cpuPowerCap)}</div>
+                            <Slider
+                              min={cpuPowerSliderMin}
+                              max={cpuPowerSliderMax}
+                              step={1000}
+                              value={[cpuPowerCap]}
+                              onValueChange={(v) => setCpuPowerCap(v[0] ?? cpuPowerCap)}
+                            />
+                          </div>
+
+                          <div className="flex gap-2">
+                            <Button
+                              variant="outline"
+                              disabled={cmdPending || uncoreMin <= 0 || uncoreMax <= 0 || uncoreMax < uncoreMin}
+                              onClick={() => sendCommand("cpu_uncore_range", { packageId: activeCpuPackageID, minKhz: Math.round(uncoreRange[0]), maxKhz: Math.round(uncoreRange[1]) })}
+                            >
+                              Apply Uncore
+                            </Button>
+                            <Button
+                              variant="outline"
+                              disabled={cmdPending || activeCpuPackageID < 0}
+                              onClick={() => sendCommand("cpu_power_cap", { packageId: activeCpuPackageID, microwatt: Math.round(clamp(cpuPowerCap, cpuPowerSliderMin, cpuPowerSliderMax)) })}
+                            >
+                              Apply Power Cap
+                            </Button>
+                          </div>
+                        </div>
                       </div>
 
-                      <div>
-                        <div className="mb-1 text-xs text-slate-500">Scaling Range {formatKHz(cpuRange[0])} ~ {formatKHz(cpuRange[1])}</div>
-                        <Slider
-                          min={cpuScaleMinBound}
-                          max={cpuScaleMaxBound}
-                          step={1000}
-                          value={cpuRange}
-                          onValueChange={(v) => setCpuRange([v[0] ?? cpuRange[0], v[1] ?? cpuRange[1]])}
-                        />
-                      </div>
+                      {cmdMsg ? <div className="mt-2 text-xs text-slate-600">{cmdMsg}</div> : null}
+                    </Section>
 
-                      <div>
-                        <div className="mb-1 text-xs text-slate-500">Governor</div>
-                        <Select value={cpuGovernor} onValueChange={setCpuGovernor}>
-                          <SelectTrigger><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            {cpuGovernorOptions.map((g) => (
-                              <SelectItem key={g} value={g}>{g}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
+                    <Section title={`CPU ${activeCpuPackageID} Per-Core Runtime`} icon={<Cpu className="h-4 w-4" />}>
+                      <CpuCoreDenseTable rows={cpuCoreRows} />
+                    </Section>
 
-                      <div className="flex gap-2">
-                        <Button
-                          disabled={cmdPending}
-                          onClick={() =>
-                            sendCommand("cpu_scaling_range", {
-                              minKhz: Math.round(cpuRange[0]),
-                              maxKhz: Math.round(cpuRange[1]),
-                              ...(cpuPackageTarget === "all" ? {} : { packageId: Number(cpuPackageTarget) }),
-                            })
-                          }
-                        >
-                          Apply Frequency
-                        </Button>
-                        <Button
-                          variant="outline"
-                          disabled={cmdPending}
-                          onClick={() =>
-                            sendCommand("cpu_governor", {
-                              governor: cpuGovernor,
-                              ...(cpuPackageTarget === "all" ? {} : { packageId: Number(cpuPackageTarget) }),
-                            })
-                          }
-                        >
-                          Apply Governor
-                        </Button>
-                      </div>
+                    <div className="grid gap-3 lg:grid-cols-2">
+                      <MetricChart chartId={`cpu-utilization-${cpuChartSuffix}`} title={`CPU ${activeCpuPackageID} Utilization`} yLabel="%" data={cpuUsageSeries} lines={[{ key: "utilPct", label: "Utilization", color: "#0f766e" }]} yDomain={[0, 100]} />
+                      <MetricChart chartId={`cpu-frequency-${cpuChartSuffix}`} title={`CPU ${activeCpuPackageID} Frequency`} yLabel="MHz" data={cpuFreqSeries} lines={[{ key: "avgMHz", label: "Average", color: "#0369a1" }]} yDomain={[0, cpuScaleMaxBound / 1000]} />
+                      <MetricChart chartId={`cpu-temperature-${cpuChartSuffix}`} title={`CPU ${activeCpuPackageID} Temperature`} yLabel="C" data={cpuTempSeries} lines={[{ key: "tempC", label: "Temperature", color: "#dc2626" }]} yDomain={[0, cpuTempMaxBound]} />
+                      <MetricChart chartId={`cpu-package-power-${cpuChartSuffix}`} title={`CPU ${activeCpuPackageID} Package Power`} yLabel="W" data={cpuPowerSeries} lines={[{ key: "powerW", label: "Power", color: "#7c3aed" }]} yDomain={[0, cpuPowerMaxBound]} />
                     </div>
 
-                    <div className="space-y-3 border border-slate-200 p-3">
-                      <div className="text-sm font-medium">Uncore and RAPL</div>
-                      <div>
-                        <div className="mb-1 text-xs text-slate-500">Uncore Package</div>
-                        <Select value={String(uncorePackage)} onValueChange={(v) => setUncorePackage(Number(v))}>
-                          <SelectTrigger><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            {cpuPackageIds.map((pkg) => (
-                              <SelectItem key={pkg} value={String(pkg)}>Package {pkg}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <div>
-                        <div className="mb-1 text-xs text-slate-500">Uncore Range {formatKHz(uncoreRange[0])} ~ {formatKHz(uncoreRange[1])}</div>
-                        <Slider
-                          min={maxOr(uncoreMin, 1)}
-                          max={maxOr(uncoreMax, 1)}
-                          step={1000}
-                          value={uncoreRange}
-                          onValueChange={(v) => setUncoreRange([v[0] ?? uncoreRange[0], v[1] ?? uncoreRange[1]])}
+                    <Section title={`CPU ${activeCpuPackageID} RAPL`} icon={<Thermometer className="h-4 w-4" />}>
+                      <div className="grid gap-2 md:grid-cols-2">
+                        <StatRow name="Energy" value={`${formatNumber(numField(activeCpuRapl, "energyMicroJ", "energy_micro_j") / 1_000_000)} J`} />
+                        <StatRow name="Current Cap" value={formatPowerMicroW(numField(activeCpuRapl, "powerCapMicroW", "power_cap_micro_w"))} />
+                        <StatRow
+                          name="Cap Range"
+                          value={
+                            numField(activeCpuControl, "powerCapMinMicroW", "power_cap_min_micro_w") > 0 || numField(activeCpuControl, "powerCapMaxMicroW", "power_cap_max_micro_w") > 0
+                              ? `${formatPowerMicroW(numField(activeCpuControl, "powerCapMinMicroW", "power_cap_min_micro_w"))} ~ ${formatPowerMicroW(numField(activeCpuControl, "powerCapMaxMicroW", "power_cap_max_micro_w"))}`
+                              : "-"
+                          }
+                        />
+                        <StatRow
+                          name="Uncore Range"
+                          value={uncoreMin > 0 && uncoreMax > 0 ? `${formatKHz(uncoreMin)} ~ ${formatKHz(uncoreMax)}` : "unsupported"}
                         />
                       </div>
-
-                      <div>
-                        <div className="mb-1 text-xs text-slate-500">Power-Cap Package</div>
-                        <Select value={String(cpuPowerPackage)} onValueChange={(v) => setCpuPowerPackage(Number(v))}>
-                          <SelectTrigger><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            {cpuPackageIds.map((pkg) => (
-                              <SelectItem key={pkg} value={String(pkg)}>Package {pkg}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <div>
-                        <div className="mb-1 text-xs text-slate-500">Power Cap {formatPowerMicroW(cpuPowerCap)}</div>
-                        <Slider
-                          min={maxOr(cpuPowerMin, 1_000_000)}
-                          max={maxOr(cpuPowerMax, Math.max(cpuPowerCap, 400_000_000))}
-                          step={1000}
-                          value={[cpuPowerCap]}
-                          onValueChange={(v) => setCpuPowerCap(v[0] ?? cpuPowerCap)}
-                        />
-                      </div>
-
-                      <div className="flex gap-2">
-                        <Button
-                          variant="outline"
-                          disabled={cmdPending}
-                          onClick={() => sendCommand("cpu_uncore_range", { packageId: uncorePackage, minKhz: Math.round(uncoreRange[0]), maxKhz: Math.round(uncoreRange[1]) })}
-                        >
-                          Apply Uncore
-                        </Button>
-                        <Button
-                          variant="outline"
-                          disabled={cmdPending}
-                          onClick={() => sendCommand("cpu_power_cap", { packageId: cpuPowerPackage, microwatt: Math.round(cpuPowerCap) })}
-                        >
-                          Apply Power Cap
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-
-                  {cmdMsg ? <div className="mt-2 text-xs text-slate-600">{cmdMsg}</div> : null}
-                </Section>
-
-                <Section title="Per-Core Runtime (Dense)" icon={<Cpu className="h-4 w-4" />}>
-                  <CpuCoreDenseTable rows={cpuCoreRows} />
-                </Section>
-
-                <div className="grid gap-3 lg:grid-cols-2">
-                  <MetricChart title="CPU Utilization" yLabel="%" data={cpuUsageSeries} lines={[{ key: "utilPct", label: "Utilization", color: "#0f766e" }]} yDomain={[0, 100]} />
-                  <MetricChart title="CPU Frequency" yLabel="MHz" data={cpuFreqSeries} lines={[{ key: "avgMHz", label: "Average", color: "#0369a1" }]} yDomain={[0, cpuScaleMaxBound / 1000]} />
-                  <MetricChart title="CPU Temperature" yLabel="C" data={cpuTempSeries} lines={[{ key: "tempC", label: "Package Avg", color: "#dc2626" }]} yDomain={[0, cpuTempMaxBound]} />
-                  <MetricChart title="CPU Package Power (RAPL delta)" yLabel="W" data={cpuPowerSeries} lines={[{ key: "powerW", label: "Power", color: "#7c3aed" }]} yDomain={[0, cpuPowerMaxBound]} />
-                </div>
-
-                <Section title="Current Package RAPL" icon={<Thermometer className="h-4 w-4" />}>
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-[620px] text-sm">
-                      <thead className="bg-slate-50">
-                        <tr>
-                          <th className="border border-slate-200 px-2 py-1 text-left">Package</th>
-                          <th className="border border-slate-200 px-2 py-1 text-left">Energy</th>
-                          <th className="border border-slate-200 px-2 py-1 text-left">Current Cap</th>
-                          <th className="border border-slate-200 px-2 py-1 text-left">Range</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {cpuRapl.map((r) => {
-                          const pkg = numField(r, "packageId", "package_id");
-                          const control = staticControlByPackage.get(pkg);
-                          return (
-                            <tr key={`rapl-${pkg}`}>
-                              <td className="border border-slate-200 px-2 py-1">{pkg}</td>
-                              <td className="border border-slate-200 px-2 py-1">{formatNumber(numField(r, "energyMicroJ", "energy_micro_j") / 1_000_000)} J</td>
-                              <td className="border border-slate-200 px-2 py-1">{formatPowerMicroW(numField(r, "powerCapMicroW", "power_cap_micro_w"))}</td>
-                              <td className="border border-slate-200 px-2 py-1">
-                                {numField(control, "powerCapMinMicroW", "power_cap_min_micro_w") > 0 || numField(control, "powerCapMaxMicroW", "power_cap_max_micro_w") > 0
-                                  ? `${formatPowerMicroW(numField(control, "powerCapMinMicroW", "power_cap_min_micro_w"))} ~ ${formatPowerMicroW(numField(control, "powerCapMaxMicroW", "power_cap_max_micro_w"))}`
-                                  : "-"}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </Section>
+                    </Section>
+                  </>
+                )}
               </TabsContent>
 
-              <TabsContent value="gpu" className="mt-3 space-y-3">
-                <Section title="GPU Controls" icon={<Gauge className="h-4 w-4" />}>
-                  <div className="grid gap-3 lg:grid-cols-2">
-                    <div className="space-y-3 border border-slate-200 p-3">
-                      <div className="text-sm font-medium">Clock Range</div>
-                      <div>
-                        <div className="mb-1 text-xs text-slate-500">GPU</div>
-                        <Select value={String(gpuIndex)} onValueChange={(v) => setGpuIndex(Number(v))}>
-                          <SelectTrigger><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            {gpuStatic.map((g) => (
-                              <SelectItem key={numField(g, "index")} value={String(numField(g, "index"))}>
-                                GPU {numField(g, "index")} - {strField(g, "name") || "NVIDIA"}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+              <TabsContent value={`gpu:${activeGPUIndex}`} className="mt-3 space-y-3">
+                {activeGPUIndex < 0 ? (
+                  <Section title="GPU Device" icon={<Gauge className="h-4 w-4" />}>
+                    <div className="text-sm text-slate-500">No NVIDIA GPU discovered.</div>
+                  </Section>
+                ) : (
+                  <>
+                    <Section title={`GPU ${activeGPUIndex} Controls`} icon={<Gauge className="h-4 w-4" />}>
+                      <div className="grid gap-3 lg:grid-cols-2">
+                        <div className="space-y-3 border border-slate-200 p-3">
+                          <div className="text-sm font-medium">Clock Range</div>
+                          <div>
+                            <div className="mb-1 text-xs text-slate-500">SM Clock {formatNumber(gpuSMRange[0])} ~ {formatNumber(gpuSMRange[1])} MHz</div>
+                            <Slider
+                              min={maxOr(numField(activeGPUStatic, "smClockMinMhz", "sm_clock_min_mhz"), 1)}
+                              max={maxOr(numField(activeGPUStatic, "smClockMaxMhz", "sm_clock_max_mhz"), 1)}
+                              step={1}
+                              value={gpuSMRange}
+                              onValueChange={(v) => setGpuSMRange([v[0] ?? gpuSMRange[0], v[1] ?? gpuSMRange[1]])}
+                            />
+                          </div>
+
+                          <div>
+                            <div className="mb-1 text-xs text-slate-500">Memory Clock {formatNumber(gpuMemRange[0])} ~ {formatNumber(gpuMemRange[1])} MHz</div>
+                            <Slider
+                              min={maxOr(numField(activeGPUStatic, "memClockMinMhz", "mem_clock_min_mhz"), 1)}
+                              max={maxOr(numField(activeGPUStatic, "memClockMaxMhz", "mem_clock_max_mhz"), 1)}
+                              step={1}
+                              value={gpuMemRange}
+                              onValueChange={(v) => setGpuMemRange([v[0] ?? gpuMemRange[0], v[1] ?? gpuMemRange[1]])}
+                            />
+                          </div>
+
+                          <Button
+                            disabled={cmdPending}
+                            onClick={() =>
+                              sendCommand("gpu_clock_range", {
+                                gpuIndex: activeGPUIndex,
+                                smMinMhz: Math.round(gpuSMRange[0]),
+                                smMaxMhz: Math.round(gpuSMRange[1]),
+                                memMinMhz: Math.round(gpuMemRange[0]),
+                                memMaxMhz: Math.round(gpuMemRange[1]),
+                              })
+                            }
+                          >
+                            Apply Clock Range
+                          </Button>
+                        </div>
+
+                        <div className="space-y-3 border border-slate-200 p-3">
+                          <div className="text-sm font-medium">Power Cap</div>
+                          <div>
+                            <div className="mb-1 text-xs text-slate-500">Power Cap {formatPowerMilliW(gpuPowerCap)}</div>
+                            <Slider
+                              min={gpuPowerMinBound}
+                              max={gpuPowerMaxBound}
+                              step={1}
+                              value={[gpuPowerCap]}
+                              onValueChange={(v) => setGpuPowerCap(v[0] ?? gpuPowerCap)}
+                            />
+                          </div>
+
+                          <Button
+                            variant="outline"
+                            disabled={cmdPending}
+                            onClick={() =>
+                              sendCommand("gpu_power_cap", {
+                                gpuIndex: activeGPUIndex,
+                                milliwatt: Math.round(clamp(gpuPowerCap, gpuPowerMinBound, gpuPowerMaxBound)),
+                              })
+                            }
+                          >
+                            Apply Power Cap
+                          </Button>
+                        </div>
                       </div>
 
-                      <div>
-                        <div className="mb-1 text-xs text-slate-500">SM Clock {formatNumber(gpuSMRange[0])} ~ {formatNumber(gpuSMRange[1])} MHz</div>
-                        <Slider
-                          min={maxOr(numField(activeGPUStatic, "smClockMinMhz", "sm_clock_min_mhz"), 1)}
-                          max={maxOr(numField(activeGPUStatic, "smClockMaxMhz", "sm_clock_max_mhz"), 1)}
-                          step={1}
-                          value={gpuSMRange}
-                          onValueChange={(v) => setGpuSMRange([v[0] ?? gpuSMRange[0], v[1] ?? gpuSMRange[1]])}
-                        />
-                      </div>
+                      {cmdMsg ? <div className="mt-2 text-xs text-slate-600">{cmdMsg}</div> : null}
+                    </Section>
 
-                      <div>
-                        <div className="mb-1 text-xs text-slate-500">Memory Clock {formatNumber(gpuMemRange[0])} ~ {formatNumber(gpuMemRange[1])} MHz</div>
-                        <Slider
-                          min={maxOr(numField(activeGPUStatic, "memClockMinMhz", "mem_clock_min_mhz"), 1)}
-                          max={maxOr(numField(activeGPUStatic, "memClockMaxMhz", "mem_clock_max_mhz"), 1)}
-                          step={1}
-                          value={gpuMemRange}
-                          onValueChange={(v) => setGpuMemRange([v[0] ?? gpuMemRange[0], v[1] ?? gpuMemRange[1]])}
-                        />
+                    <Section title={`GPU ${activeGPUIndex} Static`} icon={<Gauge className="h-4 w-4" />}>
+                      <div className="grid gap-2 md:grid-cols-2">
+                        <StatRow name="Name" value={strField(activeGPUStatic, "name") || "-"} />
+                        <StatRow name="UUID" value={strField(activeGPUStatic, "uuid") || "-"} />
+                        <StatRow name="Memory Total" value={formatBytes(numField(activeGPUStatic, "memoryTotalBytes", "memory_total_bytes"))} />
+                        <StatRow name="Power Range" value={`${formatPowerMilliW(numField(activeGPUStatic, "powerMinMilliwatt", "power_min_milliwatt"))} ~ ${formatPowerMilliW(numField(activeGPUStatic, "powerMaxMilliwatt", "power_max_milliwatt"))}`} />
+                        <StatRow name="SM Range" value={`${numField(activeGPUStatic, "smClockMinMhz", "sm_clock_min_mhz")} ~ ${numField(activeGPUStatic, "smClockMaxMhz", "sm_clock_max_mhz")} MHz`} />
+                        <StatRow name="MEM Range" value={`${numField(activeGPUStatic, "memClockMinMhz", "mem_clock_min_mhz")} ~ ${numField(activeGPUStatic, "memClockMaxMhz", "mem_clock_max_mhz")} MHz`} />
                       </div>
+                    </Section>
 
-                      <Button
-                        disabled={cmdPending}
-                        onClick={() =>
-                          sendCommand("gpu_clock_range", {
-                            gpuIndex,
-                            smMinMhz: Math.round(gpuSMRange[0]),
-                            smMaxMhz: Math.round(gpuSMRange[1]),
-                            memMinMhz: Math.round(gpuMemRange[0]),
-                            memMaxMhz: Math.round(gpuMemRange[1]),
-                          })
-                        }
-                      >
-                        Apply Clock Range
-                      </Button>
+                    <div className="grid gap-3 lg:grid-cols-2">
+                      <MetricChart chartId={`gpu-utilization-${gpuChartSuffix}`} title={`GPU ${activeGPUIndex} Utilization`} yLabel="%" data={gpuUtilSeries} lines={[{ key: "gpuUtilPct", label: "GPU", color: "#0f766e" }, { key: "memUtilPct", label: "MEM", color: "#0ea5e9" }]} yDomain={[0, 100]} />
+                      <MetricChart chartId={`gpu-power-${gpuChartSuffix}`} title={`GPU ${activeGPUIndex} Power`} yLabel="W" data={gpuPowerSeries} lines={[{ key: "powerW", label: "Power", color: "#9333ea" }]} yDomain={[0, maxOr(numField(activeGPUStatic, "powerMaxMilliwatt", "power_max_milliwatt") / 1000, 450)]} />
+                      <MetricChart chartId={`gpu-clock-${gpuChartSuffix}`} title={`GPU ${activeGPUIndex} Clock`} yLabel="MHz" data={gpuClockSeries} lines={[{ key: "smMHz", label: "SM", color: "#b45309" }, { key: "memMHz", label: "MEM", color: "#2563eb" }]} yDomain={[0, maxOr(Math.max(numField(activeGPUStatic, "smClockMaxMhz", "sm_clock_max_mhz"), numField(activeGPUStatic, "memClockMaxMhz", "mem_clock_max_mhz")), 1000)]} />
                     </div>
-
-                    <div className="space-y-3 border border-slate-200 p-3">
-                      <div className="text-sm font-medium">Power Cap</div>
-                      <div>
-                        <div className="mb-1 text-xs text-slate-500">Power Cap {formatPowerMilliW(gpuPowerCap)}</div>
-                        <Slider
-                          min={maxOr(numField(activeGPUStatic, "powerMinMilliwatt", "power_min_milliwatt"), 30_000)}
-                          max={maxOr(numField(activeGPUStatic, "powerMaxMilliwatt", "power_max_milliwatt"), 450_000)}
-                          step={1}
-                          value={[gpuPowerCap]}
-                          onValueChange={(v) => setGpuPowerCap(v[0] ?? gpuPowerCap)}
-                        />
-                      </div>
-
-                      <Button
-                        variant="outline"
-                        disabled={cmdPending}
-                        onClick={() => sendCommand("gpu_power_cap", { gpuIndex, milliwatt: Math.round(gpuPowerCap) })}
-                      >
-                        Apply Power Cap
-                      </Button>
-                    </div>
-                  </div>
-
-                  {cmdMsg ? <div className="mt-2 text-xs text-slate-600">{cmdMsg}</div> : null}
-                </Section>
-
-                <Section title="GPU Static Devices" icon={<Gauge className="h-4 w-4" />}>
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-[860px] text-xs">
-                      <thead className="bg-slate-50">
-                        <tr>
-                          <th className="border border-slate-200 px-2 py-1 text-left">Index</th>
-                          <th className="border border-slate-200 px-2 py-1 text-left">Name</th>
-                          <th className="border border-slate-200 px-2 py-1 text-left">UUID</th>
-                          <th className="border border-slate-200 px-2 py-1 text-left">Memory Total</th>
-                          <th className="border border-slate-200 px-2 py-1 text-left">Power Range</th>
-                          <th className="border border-slate-200 px-2 py-1 text-left">SM Range</th>
-                          <th className="border border-slate-200 px-2 py-1 text-left">MEM Range</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {gpuStatic.map((g) => (
-                          <tr key={`gpu-${numField(g, "index")}`}>
-                            <td className="border border-slate-200 px-2 py-1">{numField(g, "index")}</td>
-                            <td className="border border-slate-200 px-2 py-1">{strField(g, "name") || "-"}</td>
-                            <td className="border border-slate-200 px-2 py-1">{strField(g, "uuid") || "-"}</td>
-                            <td className="border border-slate-200 px-2 py-1">{formatBytes(numField(g, "memoryTotalBytes", "memory_total_bytes"))}</td>
-                            <td className="border border-slate-200 px-2 py-1">{formatPowerMilliW(numField(g, "powerMinMilliwatt", "power_min_milliwatt"))} ~ {formatPowerMilliW(numField(g, "powerMaxMilliwatt", "power_max_milliwatt"))}</td>
-                            <td className="border border-slate-200 px-2 py-1">{numField(g, "smClockMinMhz", "sm_clock_min_mhz")} ~ {numField(g, "smClockMaxMhz", "sm_clock_max_mhz")} MHz</td>
-                            <td className="border border-slate-200 px-2 py-1">{numField(g, "memClockMinMhz", "mem_clock_min_mhz")} ~ {numField(g, "memClockMaxMhz", "mem_clock_max_mhz")} MHz</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </Section>
-
-                <div className="grid gap-3 lg:grid-cols-2">
-                  <MetricChart title="GPU Utilization" yLabel="%" data={gpuUtilSeries} lines={[{ key: "gpuUtilPct", label: "GPU", color: "#0f766e" }, { key: "memUtilPct", label: "MEM", color: "#0ea5e9" }]} yDomain={[0, 100]} />
-                  <MetricChart title="GPU Power" yLabel="W" data={gpuPowerSeries} lines={[{ key: "powerW", label: "Power", color: "#9333ea" }]} yDomain={[0, maxOr(numField(activeGPUStatic, "powerMaxMilliwatt", "power_max_milliwatt") / 1000, 450)]} />
-                  <MetricChart title="GPU Clock" yLabel="MHz" data={gpuClockSeries} lines={[{ key: "smMHz", label: "SM", color: "#b45309" }, { key: "memMHz", label: "MEM", color: "#2563eb" }]} yDomain={[0, maxOr(Math.max(numField(activeGPUStatic, "smClockMaxMhz", "sm_clock_max_mhz"), numField(activeGPUStatic, "memClockMaxMhz", "mem_clock_max_mhz")), 1000)]} />
-                </div>
+                  </>
+                )}
               </TabsContent>
 
               <TabsContent value="memory" className="mt-3 space-y-3">
@@ -1157,6 +1125,7 @@ export function DashboardShell() {
                 </Section>
 
                 <MetricChart
+                  chartId="memory-usage"
                   title="Memory Usage"
                   yLabel="GB"
                   data={memorySeries}
@@ -1205,8 +1174,8 @@ export function DashboardShell() {
                 </Section>
 
                 <div className="grid gap-3 lg:grid-cols-2">
-                  <MetricChart title="Disk Throughput" yLabel="MB/s" data={storageBwSeries} lines={[{ key: "readMBps", label: "Read", color: "#0369a1" }, { key: "writeMBps", label: "Write", color: "#16a34a" }]} yDomain={[0, "auto"]} />
-                  <MetricChart title="Disk IOPS" yLabel="ops/s" data={storageIopsSeries} lines={[{ key: "readIOPS", label: "Read", color: "#c2410c" }, { key: "writeIOPS", label: "Write", color: "#7e22ce" }]} yDomain={[0, "auto"]} />
+                  <MetricChart chartId="storage-throughput" title="Disk Throughput" yLabel="MB/s" data={storageBwSeries} lines={[{ key: "readMBps", label: "Read", color: "#0369a1" }, { key: "writeMBps", label: "Write", color: "#16a34a" }]} yDomain={[0, "auto"]} />
+                  <MetricChart chartId="storage-iops" title="Disk IOPS" yLabel="ops/s" data={storageIopsSeries} lines={[{ key: "readIOPS", label: "Read", color: "#c2410c" }, { key: "writeIOPS", label: "Write", color: "#7e22ce" }]} yDomain={[0, "auto"]} />
                 </div>
               </TabsContent>
 
@@ -1240,7 +1209,7 @@ export function DashboardShell() {
                   </div>
                 </Section>
 
-                <MetricChart title="Network Throughput" yLabel="MB/s" data={networkSeries} lines={[{ key: "rxMBps", label: "RX", color: "#0f766e" }, { key: "txMBps", label: "TX", color: "#1d4ed8" }]} yDomain={[0, "auto"]} />
+                <MetricChart chartId="network-throughput" title="Network Throughput" yLabel="MB/s" data={networkSeries} lines={[{ key: "rxMBps", label: "RX", color: "#0f766e" }, { key: "txMBps", label: "TX", color: "#1d4ed8" }]} yDomain={[0, "auto"]} />
               </TabsContent>
 
               <TabsContent value="process" className="mt-3 space-y-3">

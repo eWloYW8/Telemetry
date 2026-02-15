@@ -1,14 +1,10 @@
 export function formatNumber(v: number, digits = 3): string {
   if (!Number.isFinite(v)) return "0";
-  const abs = Math.abs(v);
-  if (abs >= 1000) return v.toFixed(0);
-  if (abs >= 100) return v.toFixed(1);
-  if (abs >= 10) return v.toFixed(2);
   return v.toFixed(digits);
 }
 
 export function formatPercent(v: number): string {
-  return `${formatNumber(v, 2)} %`;
+  return `${formatNumber(v, 3)} %`;
 }
 
 export function formatBytes(v: number): string {
@@ -20,7 +16,7 @@ export function formatBytes(v: number): string {
     value /= 1024;
     idx += 1;
   }
-  return `${formatNumber(value)} ${units[idx]}`;
+  return `${formatNumber(value, 3)} ${units[idx]}`;
 }
 
 export function formatPowerMicroW(v: number): string {
@@ -35,7 +31,7 @@ export function formatKHz(v: number): string {
   if (!v || v <= 0) return "0 kHz";
   if (v >= 1_000_000) return `${formatNumber(v / 1_000_000, 3)} GHz`;
   if (v >= 1000) return `${formatNumber(v / 1000, 3)} MHz`;
-  return `${formatNumber(v)} kHz`;
+  return `${formatNumber(v, 3)} kHz`;
 }
 
 export function clamp(v: number, lo: number, hi: number): number {

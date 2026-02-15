@@ -59,7 +59,25 @@ export function nsToMsNumber(ns: bigint): number {
 
 export function nsToTimeLabel(ns: bigint): string {
   if (ns <= 0n) return "";
-  return new Date(nsToMsNumber(ns)).toLocaleTimeString();
+  const date = new Date(nsToMsNumber(ns));
+  const hh = String(date.getHours()).padStart(2, "0");
+  const mm = String(date.getMinutes()).padStart(2, "0");
+  const ss = String(date.getSeconds()).padStart(2, "0");
+  const milli = String(Number((ns / 1_000_000n) % 1000n)).padStart(3, "0");
+  return `${hh}:${mm}:${ss}.${milli}`;
+}
+
+export function nsToPreciseLabel(ns: bigint): string {
+  if (ns <= 0n) return "";
+  const date = new Date(nsToMsNumber(ns));
+  const yyyy = String(date.getFullYear());
+  const mon = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hh = String(date.getHours()).padStart(2, "0");
+  const mm = String(date.getMinutes()).padStart(2, "0");
+  const ss = String(date.getSeconds()).padStart(2, "0");
+  const frac = String(ns % 1_000_000_000n).padStart(9, "0");
+  return `${yyyy}-${mon}-${day} ${hh}:${mm}:${ss}.${frac}`;
 }
 
 export function nsDiffToSeconds(curNs: bigint, prevNs: bigint): number {

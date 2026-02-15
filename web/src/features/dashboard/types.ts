@@ -1,4 +1,4 @@
-export type TabKey = "cpu" | "gpu" | "memory" | "storage" | "network" | "process";
+export type TabKey = string;
 
 export type SortDir = "asc" | "desc";
 export type ProcessSortKey = "pid" | "ppid" | "user" | "state" | "cpu" | "memory" | "command";
