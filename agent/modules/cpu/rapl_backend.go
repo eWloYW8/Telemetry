@@ -16,6 +16,7 @@ type raplBackend interface {
 	ReadAll() []PackageRAPL
 	SetPowerCap(pkgID int, microWatt uint64) error
 	ReadControlRanges() []PackagePowerCapRange
+	ReadTemperatures() []PackageTemperature
 }
 
 type PackagePowerCapRange struct {
@@ -118,6 +119,10 @@ func (b *intelRAPLBackend) ReadControlRanges() []PackagePowerCapRange {
 		})
 	}
 	return out
+}
+
+func (b *intelRAPLBackend) ReadTemperatures() []PackageTemperature {
+	return nil
 }
 
 type amdRAPLBackend struct {
@@ -237,7 +242,10 @@ func (b *amdRAPLBackend) SetPowerCap(pkgID int, microWatt uint64) error {
 	}
 	milliWatt := microWatt / 1000
 	if milliWatt == 0 {
-		return fmt.Errorf("amd esmi expects >= 1mW power cap")
+		milliWatt = 1
+	}
+	if maxCapMilliW, err := b.client.SocketPowerCapMax(socketID); err == nil && maxCapMilliW > 0 && milliWatt > uint64(maxCapMilliW) {
+		milliWatt = uint64(maxCapMilliW)
 	}
 	if milliWatt > math.MaxUint32 {
 		return fmt.Errorf("power cap %d microW exceeds amd esmi range", microWatt)
@@ -267,9 +275,42 @@ func (b *amdRAPLBackend) ReadControlRanges() []PackagePowerCapRange {
 		if err == nil {
 			current = uint64(capMilliW) * 1000
 		}
+		maxCapMilliW, err := b.client.SocketPowerCapMax(socketID)
+		maxMicroW := uint64(0)
+		if err == nil {
+			maxMicroW = uint64(maxCapMilliW) * 1000
+		}
 		out = append(out, PackagePowerCapRange{
 			PackageID:     pkgID,
 			CurrentMicroW: current,
+			MaxMicroWatt:  maxMicroW,
+		})
+	}
+	return out
+}
+
+func (b *amdRAPLBackend) ReadTemperatures() []PackageTemperature {
+	if b == nil || b.client == nil || len(b.socketByPkgID) == 0 {
+		return nil
+	}
+
+	pkgIDs := make([]int, 0, len(b.socketByPkgID))
+	for pkgID := range b.socketByPkgID {
+		pkgIDs = append(pkgIDs, pkgID)
+	}
+	sort.Ints(pkgIDs)
+
+	out := make([]PackageTemperature, 0, len(pkgIDs))
+	for _, pkgID := range pkgIDs {
+		socketID := b.socketByPkgID[pkgID]
+		milliC, err := b.client.SocketTemperature(socketID)
+		if err != nil {
+			continue
+		}
+		out = append(out, PackageTemperature{
+			PackageID:     pkgID,
+			MilliC:        milliC,
+			SampledAtNano: time.Now().UnixNano(),
 		})
 	}
 	return out

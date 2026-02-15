@@ -23,6 +23,12 @@ type corePaths struct {
 	driver         string
 }
 
+type uncoreDomain struct {
+	packageID int
+	dieID     int
+	base      string
+}
+
 type raplZone struct {
 	packageID    int
 	energyPath   string
@@ -44,7 +50,7 @@ type Collector struct {
 	corePaths    []corePaths
 	sampleCore   []corePaths
 	packageTemps map[int]string
-	uncorePaths  map[int]string
+	uncorePaths  map[int][]uncoreDomain
 	raplBackend  raplBackend
 	coreToPkg    map[int]int
 	devices      []DeviceInfo
@@ -55,9 +61,9 @@ type Collector struct {
 
 func NewCollector(static StaticInfo, mappings []CoreMapping, packageTemps map[int]string) *Collector {
 	coreFiles := make([]corePaths, 0, len(mappings))
-	uncore := make(map[int]string)
 	coreToPkg := make(map[int]int, len(mappings))
 	sampleByPackage := make(map[int]corePaths, static.Packages)
+	pkgSet := make(map[int]struct{}, static.Packages)
 	for _, m := range mappings {
 		base := fmt.Sprintf("/sys/devices/system/cpu/cpu%d/cpufreq", m.CoreID)
 		paths := corePaths{
@@ -73,13 +79,12 @@ func NewCollector(static StaticInfo, mappings []CoreMapping, packageTemps map[in
 		}
 		coreFiles = append(coreFiles, paths)
 		coreToPkg[m.CoreID] = m.PackageID
-		if _, ok := uncore[m.PackageID]; !ok {
-			uncore[m.PackageID] = fmt.Sprintf("/sys/devices/system/cpu/intel_uncore_frequency/package_%02d_die_00", m.PackageID)
-		}
+		pkgSet[m.PackageID] = struct{}{}
 		if sampled, ok := sampleByPackage[m.PackageID]; !ok || paths.coreID < sampled.coreID {
 			sampleByPackage[m.PackageID] = paths
 		}
 	}
+	uncore := discoverUncoreDomains(pkgSet)
 	sort.Slice(coreFiles, func(i, j int) bool { return coreFiles[i].coreID < coreFiles[j].coreID })
 	sampleCores := make([]corePaths, 0, len(sampleByPackage))
 	for _, sampled := range sampleByPackage {
@@ -104,6 +109,65 @@ func NewCollector(static StaticInfo, mappings []CoreMapping, packageTemps map[in
 		devices:      buildDevices(mappings),
 		prevTicks:    make(map[int]coreTick, len(mappings)),
 	}
+}
+
+func discoverUncoreDomains(validPackages map[int]struct{}) map[int][]uncoreDomain {
+	const root = "/sys/devices/system/cpu/intel_uncore_frequency"
+	out := make(map[int][]uncoreDomain, len(validPackages))
+
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return out
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		pkgID, dieID, ok := parseUncoreDomainName(entry.Name())
+		if !ok {
+			continue
+		}
+		if len(validPackages) > 0 {
+			if _, exists := validPackages[pkgID]; !exists {
+				continue
+			}
+		}
+		out[pkgID] = append(out[pkgID], uncoreDomain{
+			packageID: pkgID,
+			dieID:     dieID,
+			base:      filepath.Join(root, entry.Name()),
+		})
+	}
+
+	for pkgID := range out {
+		sort.Slice(out[pkgID], func(i, j int) bool {
+			if out[pkgID][i].dieID == out[pkgID][j].dieID {
+				return out[pkgID][i].base < out[pkgID][j].base
+			}
+			return out[pkgID][i].dieID < out[pkgID][j].dieID
+		})
+	}
+	return out
+}
+
+func parseUncoreDomainName(name string) (pkgID int, dieID int, ok bool) {
+	if !strings.HasPrefix(name, "package_") {
+		return 0, 0, false
+	}
+	trimmed := strings.TrimPrefix(name, "package_")
+	parts := strings.Split(trimmed, "_die_")
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+	pkg, err := strconv.Atoi(parts[0])
+	if err != nil || pkg < 0 {
+		return 0, 0, false
+	}
+	die, err := strconv.Atoi(parts[1])
+	if err != nil || die < 0 {
+		return 0, 0, false
+	}
+	return pkg, die, true
 }
 
 func buildDevices(mappings []CoreMapping) []DeviceInfo {
@@ -246,24 +310,42 @@ func (c *Collector) CollectMedium() (*MediumMetrics, error) {
 	}
 	c.mu.Unlock()
 
+	tempByPkg := make(map[int]PackageTemperature, len(c.packageTemps))
 	if len(c.packageTemps) > 0 {
 		pkgIDs := make([]int, 0, len(c.packageTemps))
 		for pkgID := range c.packageTemps {
 			pkgIDs = append(pkgIDs, pkgID)
 		}
 		sort.Ints(pkgIDs)
-		out.Temperatures = make([]PackageTemperature, 0, len(pkgIDs))
 		for _, pkgID := range pkgIDs {
 			v, err := readUint(c.packageTemps[pkgID])
 			if err != nil {
 				continue
 			}
-			sampledAt := time.Now().UnixNano()
-			out.Temperatures = append(out.Temperatures, PackageTemperature{
+			tempByPkg[pkgID] = PackageTemperature{
 				PackageID:     pkgID,
 				MilliC:        uint32(v),
-				SampledAtNano: sampledAt,
-			})
+				SampledAtNano: time.Now().UnixNano(),
+			}
+		}
+	}
+	if c.raplBackend != nil {
+		for _, t := range c.raplBackend.ReadTemperatures() {
+			if _, exists := tempByPkg[t.PackageID]; exists {
+				continue
+			}
+			tempByPkg[t.PackageID] = t
+		}
+	}
+	if len(tempByPkg) > 0 {
+		pkgIDs := make([]int, 0, len(tempByPkg))
+		for pkgID := range tempByPkg {
+			pkgIDs = append(pkgIDs, pkgID)
+		}
+		sort.Ints(pkgIDs)
+		out.Temperatures = make([]PackageTemperature, 0, len(pkgIDs))
+		for _, pkgID := range pkgIDs {
+			out.Temperatures = append(out.Temperatures, tempByPkg[pkgID])
 		}
 	}
 
@@ -344,15 +426,14 @@ func (c *Collector) CollectUltra() (*UltraMetrics, error) {
 	}
 	sort.Ints(pkgIDs)
 	for _, pkgID := range pkgIDs {
-		base := c.uncorePaths[pkgID]
-		current, err := readUint(filepath.Join(base, "current_freq_khz"))
-		if err != nil {
+		domains := c.uncorePaths[pkgID]
+		if len(domains) == 0 {
 			continue
 		}
-		minVal, _ := readUint(filepath.Join(base, "min_freq_khz"))
-		maxVal, _ := readUint(filepath.Join(base, "max_freq_khz"))
-		initMin, _ := readUint(filepath.Join(base, "initial_min_freq_khz"))
-		initMax, _ := readUint(filepath.Join(base, "initial_max_freq_khz"))
+		current, minVal, maxVal, initMin, initMax, ok := readFirstUncoreMetrics(domains)
+		if !ok {
+			continue
+		}
 		sampledAt := time.Now().UnixNano()
 		out.Uncore = append(out.Uncore, UncoreMetrics{
 			PackageID:     pkgID,
@@ -436,14 +517,18 @@ func (c *Collector) PackageControls() []PackageControlInfo {
 	sort.Ints(pkgIDs)
 
 	for _, pkgID := range pkgIDs {
-		base, ok := c.uncorePaths[pkgID]
-		if !ok {
+		domains, ok := c.uncorePaths[pkgID]
+		if !ok || len(domains) == 0 {
 			continue
 		}
 		ctrl := controlsByPkg[pkgID]
-		ctrl.UncoreCurrentKHz, _ = readUint(filepath.Join(base, "current_freq_khz"))
-		ctrl.UncoreMinKHz, _ = readUint(filepath.Join(base, "min_freq_khz"))
-		ctrl.UncoreMaxKHz, _ = readUint(filepath.Join(base, "max_freq_khz"))
+		current, minVal, maxVal, _, _, readOK := readFirstUncoreMetrics(domains)
+		if !readOK {
+			continue
+		}
+		ctrl.UncoreCurrentKHz = current
+		ctrl.UncoreMinKHz = minVal
+		ctrl.UncoreMaxKHz = maxVal
 	}
 
 	if c.raplBackend != nil {
@@ -491,4 +576,19 @@ func (c *Collector) WaitWarmup(sampleInterval time.Duration) {
 	}
 	_, _ = c.CollectMedium()
 	time.Sleep(sampleInterval)
+}
+
+func readFirstUncoreMetrics(domains []uncoreDomain) (current, minVal, maxVal, initMin, initMax uint64, ok bool) {
+	for _, domain := range domains {
+		cur, err := readUint(filepath.Join(domain.base, "current_freq_khz"))
+		if err != nil {
+			continue
+		}
+		minKhz, _ := readUint(filepath.Join(domain.base, "min_freq_khz"))
+		maxKhz, _ := readUint(filepath.Join(domain.base, "max_freq_khz"))
+		initialMin, _ := readUint(filepath.Join(domain.base, "initial_min_freq_khz"))
+		initialMax, _ := readUint(filepath.Join(domain.base, "initial_max_freq_khz"))
+		return cur, minKhz, maxKhz, initialMin, initialMax, true
+	}
+	return 0, 0, 0, 0, 0, false
 }

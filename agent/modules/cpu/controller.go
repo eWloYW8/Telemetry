@@ -74,18 +74,20 @@ func (c *Controller) SetUncoreRange(pkgID int, minKHz, maxKHz uint64) error {
 	if c == nil || c.collector == nil {
 		return fmt.Errorf("cpu controller is unavailable")
 	}
-	base, ok := c.collector.uncorePaths[pkgID]
-	if !ok {
+	domains, ok := c.collector.uncorePaths[pkgID]
+	if !ok || len(domains) == 0 {
 		return fmt.Errorf("uncore package %d not found", pkgID)
 	}
-	if minKHz > 0 {
-		if err := os.WriteFile(filepath.Join(base, "min_freq_khz"), []byte(strconv.FormatUint(minKHz, 10)), 0o644); err != nil {
-			return fmt.Errorf("set uncore min for package %d: %w", pkgID, err)
+	for _, domain := range domains {
+		if minKHz > 0 {
+			if err := os.WriteFile(filepath.Join(domain.base, "min_freq_khz"), []byte(strconv.FormatUint(minKHz, 10)), 0o644); err != nil {
+				return fmt.Errorf("set uncore min for package %d die %d: %w", pkgID, domain.dieID, err)
+			}
 		}
-	}
-	if maxKHz > 0 {
-		if err := os.WriteFile(filepath.Join(base, "max_freq_khz"), []byte(strconv.FormatUint(maxKHz, 10)), 0o644); err != nil {
-			return fmt.Errorf("set uncore max for package %d: %w", pkgID, err)
+		if maxKHz > 0 {
+			if err := os.WriteFile(filepath.Join(domain.base, "max_freq_khz"), []byte(strconv.FormatUint(maxKHz, 10)), 0o644); err != nil {
+				return fmt.Errorf("set uncore max for package %d die %d: %w", pkgID, domain.dieID, err)
+			}
 		}
 	}
 	return nil
