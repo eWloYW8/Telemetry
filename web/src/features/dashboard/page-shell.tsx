@@ -285,16 +285,31 @@ export function DashboardShell() {
     cpuPowerCap > 0 ? cpuPowerCap : 0,
     400_000_000,
   );
+  const cpuPowerSyncPackageRef = useRef<number>(-1);
+  const cpuPowerSyncedRef = useRef(false);
 
   useEffect(() => {
-    if (!powerControl) return;
-    if (cpuPowerCurrent > 0) {
-      const next = clamp(cpuPowerCurrent, cpuPowerSliderMin, cpuPowerSliderMax);
-      if (Math.abs(next - cpuPowerCap) > 1) {
-        setCpuPowerCap(next);
-      }
+    if (activeCpuPackageID < 0) return;
+    if (cpuPowerSyncPackageRef.current !== activeCpuPackageID) {
+      cpuPowerSyncPackageRef.current = activeCpuPackageID;
+      cpuPowerSyncedRef.current = false;
+      setCpuPowerCap((prev) => clamp(prev || cpuPowerSliderMin, cpuPowerSliderMin, cpuPowerSliderMax));
     }
-  }, [powerControl, cpuPowerCurrent, cpuPowerSliderMin, cpuPowerSliderMax, cpuPowerCap]);
+  }, [activeCpuPackageID, cpuPowerSliderMin, cpuPowerSliderMax]);
+
+  useEffect(() => {
+    if (activeCpuPackageID < 0 || cpuPowerSyncedRef.current) return;
+    if (cpuPowerCurrent <= 0) return;
+    cpuPowerSyncedRef.current = true;
+    setCpuPowerCap(clamp(cpuPowerCurrent, cpuPowerSliderMin, cpuPowerSliderMax));
+  }, [activeCpuPackageID, cpuPowerCurrent, cpuPowerSliderMin, cpuPowerSliderMax]);
+
+  useEffect(() => {
+    setCpuPowerCap((prev) => {
+      const next = clamp(prev, cpuPowerSliderMin, cpuPowerSliderMax);
+      return Math.abs(next - prev) > 1 ? next : prev;
+    });
+  }, [cpuPowerSliderMin, cpuPowerSliderMax]);
 
   const gpuIndexes = gpuStatic.map((g) => numField(g, "index"));
   const activeGPUIndex = useMemo(() => {
