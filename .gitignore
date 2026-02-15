@@ -5,3 +5,8 @@ ui_dist
 
 /telemetry-agent*
 /telemetry-server*
+
+# protobuf generated files
+**/*.pb.go
+web/src/lib/proto/*.js
+web/src/lib/proto/*.d.ts
