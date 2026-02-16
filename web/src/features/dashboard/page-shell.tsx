@@ -22,6 +22,7 @@ import { ProcessTable } from "./components/process/process-table";
 import { postProtoCommand } from "./state/commands";
 import { useTelemetryWS } from "./state/ws-client";
 import type {
+  ChartLineDef,
   CpuCoreDenseRow,
   ProcessRow,
   ProcessSortKey,
@@ -134,6 +135,17 @@ function StatRow({ name, value }: { name: string; value: React.ReactNode }) {
   );
 }
 
+const storageLinePalette = [
+  "#0369a1",
+  "#16a34a",
+  "#9333ea",
+  "#b45309",
+  "#0f766e",
+  "#dc2626",
+  "#1d4ed8",
+  "#a21caf",
+];
+
 export function DashboardShell() {
   const { wsConnected, nodes, history } = useTelemetryWS();
 
@@ -154,8 +166,8 @@ export function DashboardShell() {
   const [gpuMemRange, setGpuMemRange] = useState<[number, number]>([0, 0]);
   const [gpuPowerCap, setGpuPowerCap] = useState(120_000);
 
-  const [procSortKey, setProcSortKey] = useState<ProcessSortKey>("cpu");
-  const [procSortDir, setProcSortDir] = useState<SortDir>("desc");
+  const [procSortKey, setProcSortKey] = useState<ProcessSortKey>("pid");
+  const [procSortDir, setProcSortDir] = useState<SortDir>("asc");
 
   useEffect(() => {
     if (nodes.length === 0) {
@@ -203,6 +215,8 @@ export function DashboardShell() {
   const cpuTemps = (cpuMediumRaw?.temperatures ?? []) as Array<Record<string, any>>;
   const cpuRapl = (cpuUltraRaw?.rapl ?? []) as Array<Record<string, any>>;
   const cpuUncoreNow = (cpuUltraRaw?.uncore ?? []) as Array<Record<string, any>>;
+  const storageDisksRaw = (storageRaw?.disks ?? []) as Array<Record<string, any>>;
+  const networkIfsRaw = (networkRaw?.interfaces ?? []) as Array<Record<string, any>>;
   const processRowsRaw = (processRaw?.processes ?? []) as Array<Record<string, any>>;
 
   const historyByCategory = history[selectedNodeId] ?? {};
@@ -741,8 +755,71 @@ export function DashboardShell() {
     return rows;
   }, [historyByCategory.network]);
 
-  const storageBwSeries = useMemo(() => {
+  const storageDiskNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const disk of storageDisksRaw) {
+      const name = strField(disk, "name");
+      if (name) names.add(name);
+    }
+    for (const item of historyByCategory.storage ?? []) {
+      const disks = ((item.sample.storageMetrics ?? item.sample.storage_metrics ?? {}).disks ?? []) as Array<Record<string, any>>;
+      for (const d of disks) {
+        const name = strField(d, "name");
+        if (name) names.add(name);
+      }
+    }
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [storageDisksRaw, historyByCategory.storage]);
+
+  const storageReadThroughputLines = useMemo<ChartLineDef[]>(
+    () =>
+      storageDiskNames.map((name, idx) => ({
+        key: `disk_read_mb_${idx}`,
+        label: name,
+        color: storageLinePalette[idx % storageLinePalette.length],
+      })),
+    [storageDiskNames],
+  );
+
+  const storageWriteThroughputLines = useMemo<ChartLineDef[]>(
+    () =>
+      storageDiskNames.map((name, idx) => ({
+        key: `disk_write_mb_${idx}`,
+        label: name,
+        color: storageLinePalette[idx % storageLinePalette.length],
+      })),
+    [storageDiskNames],
+  );
+
+  const storageReadIopsLines = useMemo<ChartLineDef[]>(
+    () =>
+      storageDiskNames.map((name, idx) => ({
+        key: `disk_read_iops_${idx}`,
+        label: name,
+        color: storageLinePalette[idx % storageLinePalette.length],
+      })),
+    [storageDiskNames],
+  );
+
+  const storageWriteIopsLines = useMemo<ChartLineDef[]>(
+    () =>
+      storageDiskNames.map((name, idx) => ({
+        key: `disk_write_iops_${idx}`,
+        label: name,
+        color: storageLinePalette[idx % storageLinePalette.length],
+      })),
+    [storageDiskNames],
+  );
+
+  const storagePerDiskSeries = useMemo(() => {
     const list = historyByCategory.storage ?? [];
+    if (storageDiskNames.length === 0) return [] as Array<Record<string, number | string>>;
+
+    const diskIndex = new Map<string, number>();
+    for (let i = 0; i < storageDiskNames.length; i += 1) {
+      diskIndex.set(storageDiskNames[i], i);
+    }
+
     const rows: Array<Record<string, number | string>> = [];
     for (let i = 1; i < list.length; i += 1) {
       const prev = list[i - 1];
@@ -753,10 +830,15 @@ export function DashboardShell() {
       const prevByName = new Map<string, Record<string, any>>();
       for (const p of prevDisks) prevByName.set(strField(p, "name"), p);
 
-      let readBpsTotal = 0;
-      let writeBpsTotal = 0;
+      const row: Record<string, number | string> = {
+        tsNs: cur.atNs.toString(),
+        time: nsToTimeLabel(cur.atNs),
+      };
+
       for (const c of curDisks) {
         const name = strField(c, "name");
+        const idx = diskIndex.get(name);
+        if (idx === undefined) continue;
         const p = prevByName.get(name);
         if (!p) continue;
 
@@ -774,41 +856,6 @@ export function DashboardShell() {
           curTs,
           prevTs,
         );
-        if (readSectorsRate !== null) readBpsTotal += readSectorsRate * 512;
-        if (writeSectorsRate !== null) writeBpsTotal += writeSectorsRate * 512;
-      }
-
-      rows.push({
-        tsNs: cur.atNs.toString(),
-        time: nsToTimeLabel(cur.atNs),
-        readMBps: readBpsTotal / 1024 / 1024,
-        writeMBps: writeBpsTotal / 1024 / 1024,
-      });
-    }
-    return rows;
-  }, [historyByCategory.storage]);
-
-  const storageIopsSeries = useMemo(() => {
-    const list = historyByCategory.storage ?? [];
-    const rows: Array<Record<string, number | string>> = [];
-    for (let i = 1; i < list.length; i += 1) {
-      const prev = list[i - 1];
-      const cur = list[i];
-      const prevDisks = ((prev.sample.storageMetrics ?? prev.sample.storage_metrics ?? {}).disks ?? []) as Array<Record<string, any>>;
-      const curDisks = ((cur.sample.storageMetrics ?? cur.sample.storage_metrics ?? {}).disks ?? []) as Array<Record<string, any>>;
-
-      const prevByName = new Map<string, Record<string, any>>();
-      for (const p of prevDisks) prevByName.set(strField(p, "name"), p);
-
-      let readIops = 0;
-      let writeIops = 0;
-      for (const c of curDisks) {
-        const name = strField(c, "name");
-        const p = prevByName.get(name);
-        if (!p) continue;
-
-        const curTs = sampledAtNs(c, cur.atNs);
-        const prevTs = sampledAtNs(p, prev.atNs);
         const readRate = deltaRate(
           numField(c, "readIos", "read_ios"),
           numField(p, "readIos", "read_ios"),
@@ -821,14 +868,15 @@ export function DashboardShell() {
           curTs,
           prevTs,
         );
-        if (readRate !== null) readIops += readRate;
-        if (writeRate !== null) writeIops += writeRate;
+        if (readSectorsRate !== null) row[`disk_read_mb_${idx}`] = (readSectorsRate * 512) / 1024 / 1024;
+        if (writeSectorsRate !== null) row[`disk_write_mb_${idx}`] = (writeSectorsRate * 512) / 1024 / 1024;
+        if (readRate !== null) row[`disk_read_iops_${idx}`] = readRate;
+        if (writeRate !== null) row[`disk_write_iops_${idx}`] = writeRate;
       }
-
-      rows.push({ tsNs: cur.atNs.toString(), time: nsToTimeLabel(cur.atNs), readIOPS: readIops, writeIOPS: writeIops });
+      rows.push(row);
     }
     return rows;
-  }, [historyByCategory.storage]);
+  }, [historyByCategory.storage, storageDiskNames]);
 
   const cpuPowerMaxBound = useMemo(() => {
     const capW = numField(activeCpuControl, "powerCapMaxMicroW", "power_cap_max_micro_w") / 1_000_000;
@@ -889,6 +937,22 @@ export function DashboardShell() {
       }
     });
   }, [processRowsRaw, procSortDir, procSortKey]);
+
+  const storageRows = useMemo(
+    () =>
+      [...storageDisksRaw].sort((a, b) =>
+        strField(a, "name").localeCompare(strField(b, "name")),
+      ),
+    [storageDisksRaw],
+  );
+
+  const networkRows = useMemo(
+    () =>
+      [...networkIfsRaw].sort((a, b) =>
+        strField(a, "name").localeCompare(strField(b, "name")),
+      ),
+    [networkIfsRaw],
+  );
 
   const onSortProcess = (key: ProcessSortKey) => {
     if (procSortKey === key) {
@@ -1271,35 +1335,37 @@ export function DashboardShell() {
 
               <TabsContent value="storage" className="mt-3 space-y-3">
                 <Section title="Storage Snapshot" icon={<HardDrive className="h-4 w-4" />}>
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-[900px] text-xs">
-                      <thead className="bg-slate-50">
+                  <div className="w-full overflow-x-auto rounded-lg border border-slate-200 text-[11px]">
+                    <table className="w-full min-w-[900px] table-auto">
+                      <thead className="sticky top-0 z-20 bg-slate-50">
                         <tr>
-                          <th className="border border-slate-200 px-2 py-1 text-left">Disk</th>
-                          <th className="border border-slate-200 px-2 py-1 text-left">Mount</th>
-                          <th className="border border-slate-200 px-2 py-1 text-left">FS</th>
-                          <th className="border border-slate-200 px-2 py-1 text-left">Total</th>
-                          <th className="border border-slate-200 px-2 py-1 text-left">Used</th>
-                          <th className="border border-slate-200 px-2 py-1 text-left">Free</th>
-                          <th className="border border-slate-200 px-2 py-1 text-left">Usage %</th>
+                          <th className="border-b border-slate-200 px-3 py-1 text-left font-medium uppercase tracking-wide text-slate-600">Disk</th>
+                          <th className="border-b border-slate-200 px-3 py-1 text-left font-medium uppercase tracking-wide text-slate-600">Mount</th>
+                          <th className="border-b border-slate-200 px-3 py-1 text-left font-medium uppercase tracking-wide text-slate-600">FS</th>
+                          <th className="border-b border-slate-200 px-3 py-1 text-left font-medium uppercase tracking-wide text-slate-600">Total</th>
+                          <th className="border-b border-slate-200 px-3 py-1 text-left font-medium uppercase tracking-wide text-slate-600">Used</th>
+                          <th className="border-b border-slate-200 px-3 py-1 text-left font-medium uppercase tracking-wide text-slate-600">Free</th>
+                          <th className="border-b border-slate-200 px-3 py-1 text-left font-medium uppercase tracking-wide text-slate-600">Usage %</th>
                         </tr>
                       </thead>
-                      <tbody>
-                        {((storageRaw?.disks ?? []) as Array<Record<string, any>>).map((d) => {
+                      <tbody className="divide-y divide-slate-100 bg-white">
+                        {storageRows.map((d) => {
                           const used = numField(d, "usedBytes", "used_bytes");
                           const free = numField(d, "freeBytes", "free_bytes");
                           const total = used + free;
                           const staticInfo = ((storageMeta?.staticDisks ?? storageMeta?.static_disks ?? []) as Array<Record<string, any>>)
                             .find((s) => strField(s, "name") === strField(d, "name"));
                           return (
-                            <tr key={`disk-${strField(d, "name")}`}>
-                              <td className="border border-slate-200 px-2 py-1">{strField(d, "name") || "-"}</td>
-                              <td className="border border-slate-200 px-2 py-1">{strField(staticInfo, "mountpoint") || "-"}</td>
-                              <td className="border border-slate-200 px-2 py-1">{strField(staticInfo, "filesystem") || "-"}</td>
-                              <td className="border border-slate-200 px-2 py-1">{formatBytes(total)}</td>
-                              <td className="border border-slate-200 px-2 py-1">{formatBytes(used)}</td>
-                              <td className="border border-slate-200 px-2 py-1">{formatBytes(free)}</td>
-                              <td className="border border-slate-200 px-2 py-1">{total > 0 ? formatPercent((used * 100) / total) : "0 %"}</td>
+                            <tr key={`disk-${strField(d, "name")}`} className="hover:bg-slate-50">
+                              <td className="px-3 py-0.5 whitespace-nowrap font-mono">{strField(d, "name") || "-"}</td>
+                              <td className="max-w-[280px] overflow-hidden text-ellipsis px-3 py-0.5 whitespace-nowrap" title={strField(staticInfo, "mountpoint") || "-"}>
+                                {strField(staticInfo, "mountpoint") || "-"}
+                              </td>
+                              <td className="px-3 py-0.5 whitespace-nowrap">{strField(staticInfo, "filesystem") || "-"}</td>
+                              <td className="px-3 py-0.5 whitespace-nowrap font-mono">{formatBytes(total)}</td>
+                              <td className="px-3 py-0.5 whitespace-nowrap font-mono">{formatBytes(used)}</td>
+                              <td className="px-3 py-0.5 whitespace-nowrap font-mono">{formatBytes(free)}</td>
+                              <td className="px-3 py-0.5 whitespace-nowrap font-mono">{total > 0 ? formatPercent((used * 100) / total) : "0 %"}</td>
                             </tr>
                           );
                         })}
@@ -1309,34 +1375,38 @@ export function DashboardShell() {
                 </Section>
 
                 <div className="grid gap-3 lg:grid-cols-2">
-                  <MetricChart chartId="storage-throughput" title="Disk Throughput" yLabel="MB/s" data={storageBwSeries} lines={[{ key: "readMBps", label: "Read", color: "#0369a1" }, { key: "writeMBps", label: "Write", color: "#16a34a" }]} yDomain={[0, "auto"]} />
-                  <MetricChart chartId="storage-iops" title="Disk IOPS" yLabel="ops/s" data={storageIopsSeries} lines={[{ key: "readIOPS", label: "Read", color: "#c2410c" }, { key: "writeIOPS", label: "Write", color: "#7e22ce" }]} yDomain={[0, "auto"]} />
+                  <MetricChart chartId="storage-read-throughput" title="Disk Read Throughput" yLabel="MB/s" data={storagePerDiskSeries} lines={storageReadThroughputLines} yDomain={[0, "auto"]} />
+                  <MetricChart chartId="storage-write-throughput" title="Disk Write Throughput" yLabel="MB/s" data={storagePerDiskSeries} lines={storageWriteThroughputLines} yDomain={[0, "auto"]} />
+                  <MetricChart chartId="storage-read-iops" title="Disk Read IOPS" yLabel="ops/s" data={storagePerDiskSeries} lines={storageReadIopsLines} yDomain={[0, "auto"]} />
+                  <MetricChart chartId="storage-write-iops" title="Disk Write IOPS" yLabel="ops/s" data={storagePerDiskSeries} lines={storageWriteIopsLines} yDomain={[0, "auto"]} />
                 </div>
               </TabsContent>
 
               <TabsContent value="network" className="mt-3 space-y-3">
                 <Section title="Network Snapshot" icon={<Network className="h-4 w-4" />}>
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-[780px] text-xs">
-                      <thead className="bg-slate-50">
+                  <div className="w-full overflow-x-auto rounded-lg border border-slate-200 text-[11px]">
+                    <table className="w-full min-w-[780px] table-auto">
+                      <thead className="sticky top-0 z-20 bg-slate-50">
                         <tr>
-                          <th className="border border-slate-200 px-2 py-1 text-left">Interface</th>
-                          <th className="border border-slate-200 px-2 py-1 text-left">IPs</th>
-                          <th className="border border-slate-200 px-2 py-1 text-left">RX Bytes</th>
-                          <th className="border border-slate-200 px-2 py-1 text-left">TX Bytes</th>
-                          <th className="border border-slate-200 px-2 py-1 text-left">RX Packets</th>
-                          <th className="border border-slate-200 px-2 py-1 text-left">TX Packets</th>
+                          <th className="border-b border-slate-200 px-3 py-1 text-left font-medium uppercase tracking-wide text-slate-600">Interface</th>
+                          <th className="border-b border-slate-200 px-3 py-1 text-left font-medium uppercase tracking-wide text-slate-600">IPs</th>
+                          <th className="border-b border-slate-200 px-3 py-1 text-left font-medium uppercase tracking-wide text-slate-600">RX Bytes</th>
+                          <th className="border-b border-slate-200 px-3 py-1 text-left font-medium uppercase tracking-wide text-slate-600">TX Bytes</th>
+                          <th className="border-b border-slate-200 px-3 py-1 text-left font-medium uppercase tracking-wide text-slate-600">RX Packets</th>
+                          <th className="border-b border-slate-200 px-3 py-1 text-left font-medium uppercase tracking-wide text-slate-600">TX Packets</th>
                         </tr>
                       </thead>
-                      <tbody>
-                        {((networkRaw?.interfaces ?? []) as Array<Record<string, any>>).map((itf) => (
-                          <tr key={`if-${strField(itf, "name")}`}>
-                            <td className="border border-slate-200 px-2 py-1">{strField(itf, "name") || "-"}</td>
-                            <td className="border border-slate-200 px-2 py-1">{((itf.ips ?? []) as string[]).join(", ") || "-"}</td>
-                            <td className="border border-slate-200 px-2 py-1">{formatBytes(numField(itf, "rxBytes", "rx_bytes"))}</td>
-                            <td className="border border-slate-200 px-2 py-1">{formatBytes(numField(itf, "txBytes", "tx_bytes"))}</td>
-                            <td className="border border-slate-200 px-2 py-1">{formatNumber(numField(itf, "rxPackets", "rx_packets"), 0)}</td>
-                            <td className="border border-slate-200 px-2 py-1">{formatNumber(numField(itf, "txPackets", "tx_packets"), 0)}</td>
+                      <tbody className="divide-y divide-slate-100 bg-white">
+                        {networkRows.map((itf) => (
+                          <tr key={`if-${strField(itf, "name")}`} className="hover:bg-slate-50">
+                            <td className="px-3 py-0.5 whitespace-nowrap font-mono">{strField(itf, "name") || "-"}</td>
+                            <td className="max-w-[360px] overflow-hidden text-ellipsis px-3 py-0.5 whitespace-nowrap" title={((itf.ips ?? []) as string[]).join(", ") || "-"}>
+                              {((itf.ips ?? []) as string[]).join(", ") || "-"}
+                            </td>
+                            <td className="px-3 py-0.5 whitespace-nowrap font-mono">{formatBytes(numField(itf, "rxBytes", "rx_bytes"))}</td>
+                            <td className="px-3 py-0.5 whitespace-nowrap font-mono">{formatBytes(numField(itf, "txBytes", "tx_bytes"))}</td>
+                            <td className="px-3 py-0.5 whitespace-nowrap font-mono">{formatNumber(numField(itf, "rxPackets", "rx_packets"), 0)}</td>
+                            <td className="px-3 py-0.5 whitespace-nowrap font-mono">{formatNumber(numField(itf, "txPackets", "tx_packets"), 0)}</td>
                           </tr>
                         ))}
                       </tbody>
