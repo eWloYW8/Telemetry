@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Gauge } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 
 import { MetricChart } from "../../components/charts/metric-chart";
@@ -12,6 +11,7 @@ import { maxOr } from "../../utils/rates";
 import { nsToTimeLabel } from "../../utils/time";
 import { clamp, formatBytes, formatNumber, formatPowerMilliW } from "../../utils/units";
 import { moduleMeta, numField, strField } from "../shared/data";
+import { useThrottledEmitter } from "../shared/live-control";
 import { Section, StatRow } from "../shared/section";
 
 type GPUModuleViewProps = {
@@ -64,6 +64,22 @@ export function GPUModuleView({
   const gpuSMMaxRaw = numField(activeGPUStatic, "smClockMaxMhz", "sm_clock_max_mhz");
   const gpuMemMinRaw = numField(activeGPUStatic, "memClockMinMhz", "mem_clock_min_mhz");
   const gpuMemMaxRaw = numField(activeGPUStatic, "memClockMaxMhz", "mem_clock_max_mhz");
+
+  const gpuCurrentSMMin = numField(
+    activeGPUFast,
+    "smClockMinMhz",
+    "sm_clock_min_mhz",
+  );
+  const gpuCurrentSMMax = numField(
+    activeGPUFast,
+    "smClockMaxMhz",
+    "sm_clock_max_mhz",
+  );
+  const gpuCurrentMemMin = numField(activeGPUFast, "memClockMinMhz", "mem_clock_min_mhz");
+  const gpuCurrentMemMax = numField(activeGPUFast, "memClockMaxMhz", "mem_clock_max_mhz");
+  const gpuCurrentSMClock = numField(activeGPUFast, "graphicsClockMhz", "graphics_clock_mhz");
+  const gpuCurrentMemClock = numField(activeGPUFast, "memoryClockMhz", "memory_clock_mhz");
+
   const gpuCanTuneSM = gpuSMMinRaw > 0 && gpuSMMaxRaw > gpuSMMinRaw;
   const gpuCanTuneMem = gpuMemMinRaw > 0 && gpuMemMaxRaw > gpuMemMinRaw;
 
@@ -81,51 +97,101 @@ export function GPUModuleView({
   const [gpuMemRange, setGpuMemRange] = useState<[number, number]>([0, 0]);
   const [gpuPowerCap, setGpuPowerCap] = useState(120_000);
 
+  const [isEditingClock, setIsEditingClock] = useState(false);
+  const [isEditingPowerCap, setIsEditingPowerCap] = useState(false);
+  const clockSyncBlockUntilRef = useRef(0);
+  const powerCapSyncBlockUntilRef = useRef(0);
+
+  const clockControl = useThrottledEmitter<{ sm: [number, number]; mem: [number, number] }>((range) => {
+    sendCommand("gpu_clock_range", {
+      gpuIndex,
+      smMinMhz: gpuCanTuneSM ? Math.round(range.sm[0]) : 0,
+      smMaxMhz: gpuCanTuneSM ? Math.round(range.sm[1]) : 0,
+      memMinMhz: gpuCanTuneMem ? Math.round(range.mem[0]) : 0,
+      memMaxMhz: gpuCanTuneMem ? Math.round(range.mem[1]) : 0,
+    });
+  }, 100);
+
+  const powerCapControl = useThrottledEmitter<number>((value) => {
+    sendCommand("gpu_power_cap", {
+      gpuIndex,
+      milliwatt: Math.round(clamp(value, gpuPowerMinBound, gpuPowerMaxBound)),
+    });
+  }, 100);
+
   useEffect(() => {
-    if (!activeGPUStatic) return;
+    if (isEditingClock) return;
+    if (Date.now() < clockSyncBlockUntilRef.current) return;
+
     if (gpuCanTuneSM) {
-      setGpuSMRange((prev) => {
-        const lo = clamp(prev[0] || gpuSMMinRaw, gpuSMMinRaw, gpuSMMaxRaw);
-        const hi = clamp(prev[1] || gpuSMMaxRaw, gpuSMMinRaw, gpuSMMaxRaw);
-        return [Math.min(lo, hi), Math.max(lo, hi)];
-      });
+      let backendMinRaw = 0;
+      let backendMaxRaw = 0;
+      if (gpuCurrentSMMin > 0 && gpuCurrentSMMax > 0) {
+        backendMinRaw = gpuCurrentSMMin;
+        backendMaxRaw = gpuCurrentSMMax;
+      } else if (gpuCurrentSMClock > 0) {
+        backendMinRaw = gpuCurrentSMClock;
+        backendMaxRaw = gpuCurrentSMClock;
+      }
+      if (backendMinRaw > 0 && backendMaxRaw > 0) {
+        const lo = clamp(Math.min(backendMinRaw, backendMaxRaw), gpuSMMinRaw, gpuSMMaxRaw);
+        const hi = clamp(Math.max(backendMinRaw, backendMaxRaw), gpuSMMinRaw, gpuSMMaxRaw);
+        setGpuSMRange((prev) => (prev[0] === lo && prev[1] === hi ? prev : [lo, hi]));
+      }
     } else {
       setGpuSMRange([0, 0]);
     }
 
     if (gpuCanTuneMem) {
-      setGpuMemRange((prev) => {
-        const lo = clamp(prev[0] || gpuMemMinRaw, gpuMemMinRaw, gpuMemMaxRaw);
-        const hi = clamp(prev[1] || gpuMemMaxRaw, gpuMemMinRaw, gpuMemMaxRaw);
-        return [Math.min(lo, hi), Math.max(lo, hi)];
-      });
+      let backendMinRaw = 0;
+      let backendMaxRaw = 0;
+      if (gpuCurrentMemMin > 0 && gpuCurrentMemMax > 0) {
+        backendMinRaw = gpuCurrentMemMin;
+        backendMaxRaw = gpuCurrentMemMax;
+      } else if (gpuCurrentMemClock > 0) {
+        backendMinRaw = gpuCurrentMemClock;
+        backendMaxRaw = gpuCurrentMemClock;
+      }
+      if (backendMinRaw > 0 && backendMaxRaw > 0) {
+        const lo = clamp(Math.min(backendMinRaw, backendMaxRaw), gpuMemMinRaw, gpuMemMaxRaw);
+        const hi = clamp(Math.max(backendMinRaw, backendMaxRaw), gpuMemMinRaw, gpuMemMaxRaw);
+        setGpuMemRange((prev) => (prev[0] === lo && prev[1] === hi ? prev : [lo, hi]));
+      }
     } else {
       setGpuMemRange([0, 0]);
     }
-  }, [activeGPUStatic, gpuCanTuneSM, gpuCanTuneMem, gpuSMMinRaw, gpuSMMaxRaw, gpuMemMinRaw, gpuMemMaxRaw]);
-
-  const gpuPowerSyncDeviceRef = useRef<number>(-1);
-  const gpuPowerSyncedRef = useRef(false);
-
-  useEffect(() => {
-    if (gpuIndex < 0) return;
-    if (gpuPowerSyncDeviceRef.current !== gpuIndex) {
-      gpuPowerSyncDeviceRef.current = gpuIndex;
-      gpuPowerSyncedRef.current = false;
-      setGpuPowerCap((prev) => clamp(prev || gpuPowerMinBound, gpuPowerMinBound, gpuPowerMaxBound));
-    }
-  }, [gpuIndex, gpuPowerMinBound, gpuPowerMaxBound]);
-
-  useEffect(() => {
-    if (gpuIndex < 0 || gpuPowerSyncedRef.current) return;
-    if (gpuPowerCurrent <= 0) return;
-    gpuPowerSyncedRef.current = true;
-    setGpuPowerCap(clamp(gpuPowerCurrent, gpuPowerMinBound, gpuPowerMaxBound));
-  }, [gpuIndex, gpuPowerCurrent, gpuPowerMinBound, gpuPowerMaxBound]);
+  }, [
+    isEditingClock,
+    gpuCanTuneSM,
+    gpuCanTuneMem,
+    gpuCurrentSMMin,
+    gpuCurrentSMMax,
+    gpuCurrentMemMin,
+    gpuCurrentMemMax,
+    gpuCurrentSMClock,
+    gpuCurrentMemClock,
+    gpuSMMinRaw,
+    gpuSMMaxRaw,
+    gpuMemMinRaw,
+    gpuMemMaxRaw,
+    activeGPUFast,
+  ]);
 
   useEffect(() => {
-    setGpuPowerCap((prev) => clamp(prev, gpuPowerMinBound, gpuPowerMaxBound));
-  }, [gpuPowerMinBound, gpuPowerMaxBound]);
+    if (isEditingPowerCap) return;
+    if (Date.now() < powerCapSyncBlockUntilRef.current) return;
+    const next = clamp(gpuPowerCurrent > 0 ? gpuPowerCurrent : gpuPowerMinBound, gpuPowerMinBound, gpuPowerMaxBound);
+    setGpuPowerCap((prev) => (Math.abs(prev - next) < 1 ? prev : next));
+  }, [isEditingPowerCap, gpuPowerCurrent, gpuPowerMinBound, gpuPowerMaxBound]);
+
+  useEffect(() => {
+    setIsEditingClock(false);
+    setIsEditingPowerCap(false);
+    setGpuSMRange([0, 0]);
+    setGpuMemRange([0, 0]);
+    clockSyncBlockUntilRef.current = 0;
+    powerCapSyncBlockUntilRef.current = 0;
+  }, [gpuIndex]);
 
   const gpuUtilSeries = useMemo(() => {
     const list = historyByCategory.gpu_fast ?? [];
@@ -196,7 +262,27 @@ export function GPUModuleView({
                   max={maxOr(gpuSMMaxRaw, 1)}
                   step={1}
                   value={gpuSMRange}
-                  onValueChange={(v) => setGpuSMRange([v[0] ?? gpuSMRange[0], v[1] ?? gpuSMRange[1]])}
+                  onValueChange={(v) => {
+                    const next: [number, number] = [
+                      clamp(v[0] ?? gpuSMRange[0], gpuSMMinRaw, gpuSMMaxRaw),
+                      clamp(v[1] ?? gpuSMRange[1], gpuSMMinRaw, gpuSMMaxRaw),
+                    ];
+                    const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
+                    setIsEditingClock(true);
+                    setGpuSMRange(fixed);
+                    clockControl.send({ sm: fixed, mem: gpuMemRange });
+                  }}
+                  onValueCommit={(v) => {
+                    const next: [number, number] = [
+                      clamp(v[0] ?? gpuSMRange[0], gpuSMMinRaw, gpuSMMaxRaw),
+                      clamp(v[1] ?? gpuSMRange[1], gpuSMMinRaw, gpuSMMaxRaw),
+                    ];
+                    const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
+                    setGpuSMRange(fixed);
+                    clockControl.flush({ sm: fixed, mem: gpuMemRange });
+                    clockSyncBlockUntilRef.current = Date.now() + 200;
+                    setIsEditingClock(false);
+                  }}
                 />
               </div>
             ) : null}
@@ -211,7 +297,27 @@ export function GPUModuleView({
                   max={maxOr(gpuMemMaxRaw, 1)}
                   step={1}
                   value={gpuMemRange}
-                  onValueChange={(v) => setGpuMemRange([v[0] ?? gpuMemRange[0], v[1] ?? gpuMemRange[1]])}
+                  onValueChange={(v) => {
+                    const next: [number, number] = [
+                      clamp(v[0] ?? gpuMemRange[0], gpuMemMinRaw, gpuMemMaxRaw),
+                      clamp(v[1] ?? gpuMemRange[1], gpuMemMinRaw, gpuMemMaxRaw),
+                    ];
+                    const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
+                    setIsEditingClock(true);
+                    setGpuMemRange(fixed);
+                    clockControl.send({ sm: gpuSMRange, mem: fixed });
+                  }}
+                  onValueCommit={(v) => {
+                    const next: [number, number] = [
+                      clamp(v[0] ?? gpuMemRange[0], gpuMemMinRaw, gpuMemMaxRaw),
+                      clamp(v[1] ?? gpuMemRange[1], gpuMemMinRaw, gpuMemMaxRaw),
+                    ];
+                    const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
+                    setGpuMemRange(fixed);
+                    clockControl.flush({ sm: gpuSMRange, mem: fixed });
+                    clockSyncBlockUntilRef.current = Date.now() + 200;
+                    setIsEditingClock(false);
+                  }}
                 />
               </div>
             ) : null}
@@ -219,21 +325,6 @@ export function GPUModuleView({
             {!gpuCanTuneSM && !gpuCanTuneMem ? (
               <div className="text-xs text-slate-500">Clock range control unsupported on this GPU.</div>
             ) : null}
-
-            <Button
-              disabled={cmdPending || (!gpuCanTuneSM && !gpuCanTuneMem)}
-              onClick={() =>
-                sendCommand("gpu_clock_range", {
-                  gpuIndex,
-                  smMinMhz: gpuCanTuneSM ? Math.round(gpuSMRange[0]) : 0,
-                  smMaxMhz: gpuCanTuneSM ? Math.round(gpuSMRange[1]) : 0,
-                  memMinMhz: gpuCanTuneMem ? Math.round(gpuMemRange[0]) : 0,
-                  memMaxMhz: gpuCanTuneMem ? Math.round(gpuMemRange[1]) : 0,
-                })
-              }
-            >
-              Apply Clock Range
-            </Button>
           </div>
 
           <div className="space-y-3 border border-slate-200 p-3">
@@ -245,22 +336,21 @@ export function GPUModuleView({
                 max={gpuPowerMaxBound}
                 step={1}
                 value={[gpuPowerCap]}
-                onValueChange={(v) => setGpuPowerCap(v[0] ?? gpuPowerCap)}
+                onValueChange={(v) => {
+                  const next = clamp(v[0] ?? gpuPowerCap, gpuPowerMinBound, gpuPowerMaxBound);
+                  setIsEditingPowerCap(true);
+                  setGpuPowerCap(next);
+                  powerCapControl.send(next);
+                }}
+                onValueCommit={(v) => {
+                  const next = clamp(v[0] ?? gpuPowerCap, gpuPowerMinBound, gpuPowerMaxBound);
+                  setGpuPowerCap(next);
+                  powerCapControl.flush(next);
+                  powerCapSyncBlockUntilRef.current = Date.now() + 200;
+                  setIsEditingPowerCap(false);
+                }}
               />
             </div>
-
-            <Button
-              variant="outline"
-              disabled={cmdPending}
-              onClick={() =>
-                sendCommand("gpu_power_cap", {
-                  gpuIndex,
-                  milliwatt: Math.round(clamp(gpuPowerCap, gpuPowerMinBound, gpuPowerMaxBound)),
-                })
-              }
-            >
-              Apply Power Cap
-            </Button>
           </div>
         </div>
 

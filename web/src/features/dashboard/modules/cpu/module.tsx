@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Cpu, Thermometer } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -20,6 +19,7 @@ import { deltaRate, maxOr } from "../../utils/rates";
 import { nsToTimeLabel } from "../../utils/time";
 import { clamp, formatKHz, formatNumber, formatPowerMicroW } from "../../utils/units";
 import { formatIDRanges, moduleMeta, numField, sampledAtNs, strField } from "../shared/data";
+import { useThrottledEmitter } from "../shared/live-control";
 import { Section, StatRow } from "../shared/section";
 
 type CPUModuleViewProps = {
@@ -77,6 +77,7 @@ export function CPUModuleView({
   const cpuTemps = (cpuMediumRaw?.temperatures ?? []) as Array<Record<string, any>>;
   const cpuRapl = (cpuUltraRaw?.rapl ?? []) as Array<Record<string, any>>;
   const cpuUncoreNow = (cpuUltraRaw?.uncore ?? []) as Array<Record<string, any>>;
+  const cpuPerCoreNow = (cpuUltraRaw?.perCore ?? []) as Array<Record<string, any>>;
 
   const cpuScaleMinBound =
     numField(
@@ -105,24 +106,29 @@ export function CPUModuleView({
   const [uncoreRange, setUncoreRange] = useState<[number, number]>([1_200_000, 3_500_000]);
   const [cpuPowerCap, setCpuPowerCap] = useState(120_000_000);
 
-  useEffect(() => {
-    setCpuRange((prev) => {
-      const lo = clamp(prev[0], cpuScaleMinBound, cpuScaleMaxBound);
-      const hi = clamp(prev[1], cpuScaleMinBound, cpuScaleMaxBound);
-      return [Math.min(lo, hi), Math.max(lo, hi)];
-    });
-  }, [cpuScaleMinBound, cpuScaleMaxBound]);
-
-  useEffect(() => {
-    if (!cpuGovernorOptions.includes(cpuGovernor)) {
-      setCpuGovernor(cpuGovernorOptions[0] ?? "performance");
-    }
-  }, [cpuGovernor, cpuGovernorOptions]);
+  const [isEditingScale, setIsEditingScale] = useState(false);
+  const [isEditingUncore, setIsEditingUncore] = useState(false);
+  const [isEditingPowerCap, setIsEditingPowerCap] = useState(false);
+  const scaleSyncBlockUntilRef = useRef(0);
+  const uncoreSyncBlockUntilRef = useRef(0);
+  const powerCapSyncBlockUntilRef = useRef(0);
+  const governorSyncBlockUntilRef = useRef(0);
 
   const activeUncoreMetric = useMemo(
     () => cpuUncoreNow.find((u) => numField(u, "packageId", "package_id") === packageId) ?? null,
     [cpuUncoreNow, packageId],
   );
+  const activePerCoreCfg = useMemo(() => {
+    const list = cpuPerCoreNow
+      .filter((c) => numField(c, "packageId", "package_id") === packageId)
+      .sort((a, b) => numField(a, "coreId", "core_id") - numField(b, "coreId", "core_id"));
+    return list[0] ?? null;
+  }, [cpuPerCoreNow, packageId]);
+  const activeCpuRapl = useMemo(
+    () => cpuRapl.find((r) => numField(r, "packageId", "package_id") === packageId) ?? null,
+    [cpuRapl, packageId],
+  );
+
   const uncoreRuntimeMin = numField(activeUncoreMetric, "minKhz", "min_khz");
   const uncoreRuntimeMax = numField(activeUncoreMetric, "maxKhz", "max_khz");
   const uncoreInitialMin = numField(activeUncoreMetric, "initialMinKhz", "initial_min_khz");
@@ -131,41 +137,12 @@ export function CPUModuleView({
   const uncoreMax = uncoreInitialMax || numField(activeCpuControl, "uncoreMaxKhz", "uncore_max_khz");
   const cpuSupportsUncore = numField(cpuStatic, "supportsIntelUncore", "supports_intel_uncore") > 0;
   const canControlUncore = uncoreMin > 0 && uncoreMax > uncoreMin;
-  const uncoreSyncPackageRef = useRef<number>(-1);
-  const uncoreSyncedRef = useRef(false);
-
-  useEffect(() => {
-    if (packageId < 0) return;
-    if (uncoreSyncPackageRef.current !== packageId) {
-      uncoreSyncPackageRef.current = packageId;
-      uncoreSyncedRef.current = false;
-    }
-  }, [packageId]);
-
-  useEffect(() => {
-    if (!canControlUncore || uncoreSyncedRef.current) return;
-    const runtimeMin = uncoreRuntimeMin > 0 ? uncoreRuntimeMin : uncoreMin;
-    const runtimeMax = uncoreRuntimeMax > 0 ? uncoreRuntimeMax : uncoreMax;
-    if (runtimeMax < runtimeMin || runtimeMin <= 0) return;
-    const lo = clamp(runtimeMin, uncoreMin, uncoreMax);
-    const hi = clamp(runtimeMax, uncoreMin, uncoreMax);
-    const next: [number, number] = [Math.min(lo, hi), Math.max(lo, hi)];
-    uncoreSyncedRef.current = true;
-    setUncoreRange(next);
-  }, [canControlUncore, uncoreRuntimeMin, uncoreRuntimeMax, uncoreMin, uncoreMax]);
-
-  useEffect(() => {
-    if (!canControlUncore) return;
-    setUncoreRange((prev) => {
-      const lo = clamp(prev[0], uncoreMin, uncoreMax);
-      const hi = clamp(prev[1], uncoreMin, uncoreMax);
-      return [Math.min(lo, hi), Math.max(lo, hi)];
-    });
-  }, [canControlUncore, uncoreMin, uncoreMax]);
 
   const cpuPowerMin = numField(activeCpuControl, "powerCapMinMicroW", "power_cap_min_micro_w");
   const cpuPowerMax = numField(activeCpuControl, "powerCapMaxMicroW", "power_cap_max_micro_w");
-  const cpuPowerCurrent = numField(activeCpuControl, "powerCapMicroW", "power_cap_micro_w");
+  const cpuPowerCurrent =
+    numField(activeCpuRapl, "powerCapMicroW", "power_cap_micro_w") ||
+    numField(activeCpuControl, "powerCapMicroW", "power_cap_micro_w");
   const cpuPowerSliderMax = useMemo(() => {
     if (cpuPowerMax > 0) return cpuPowerMax;
     if (cpuPowerCurrent > 0) return cpuPowerCurrent;
@@ -177,28 +154,116 @@ export function CPUModuleView({
     return Math.min(1_000_000, cpuPowerSliderMax);
   }, [cpuPowerMin, cpuPowerSliderMax]);
 
-  const cpuPowerSyncPackageRef = useRef<number>(-1);
-  const cpuPowerSyncedRef = useRef(false);
+  const scalingControl = useThrottledEmitter<[number, number]>((next) => {
+    sendCommand("cpu_scaling_range", {
+      packageId,
+      minKhz: Math.round(next[0]),
+      maxKhz: Math.round(next[1]),
+    });
+  }, 100);
+
+  const uncoreControl = useThrottledEmitter<[number, number]>((next) => {
+    sendCommand("cpu_uncore_range", {
+      packageId,
+      minKhz: Math.round(next[0]),
+      maxKhz: Math.round(next[1]),
+    });
+  }, 100);
+
+  const powerCapControl = useThrottledEmitter<number>((value) => {
+    sendCommand("cpu_power_cap", {
+      packageId,
+      microwatt: Math.round(clamp(value, cpuPowerSliderMin, cpuPowerSliderMax)),
+    });
+  }, 100);
+
+  const governorControl = useThrottledEmitter<string>((value) => {
+    sendCommand("cpu_governor", {
+      packageId,
+      governor: value,
+    });
+  }, 100);
 
   useEffect(() => {
-    if (packageId < 0) return;
-    if (cpuPowerSyncPackageRef.current !== packageId) {
-      cpuPowerSyncPackageRef.current = packageId;
-      cpuPowerSyncedRef.current = false;
-      setCpuPowerCap((prev) => clamp(prev || cpuPowerSliderMin, cpuPowerSliderMin, cpuPowerSliderMax));
+    if (isEditingScale) return;
+    if (Date.now() < scaleSyncBlockUntilRef.current) return;
+    const backendMinRaw =
+      numField(activePerCoreCfg, "scalingMinKhz", "scaling_min_khz") ||
+      numField(activeCpuControl, "scalingMinKhz", "scaling_min_khz");
+    const backendMaxRaw =
+      numField(activePerCoreCfg, "scalingMaxKhz", "scaling_max_khz") ||
+      numField(activeCpuControl, "scalingMaxKhz", "scaling_max_khz");
+    const backendMin = backendMinRaw > 0 ? backendMinRaw : cpuScaleMinBound;
+    const backendMax = backendMaxRaw > 0 ? backendMaxRaw : cpuScaleMaxBound;
+    const lo = clamp(Math.min(backendMin, backendMax), cpuScaleMinBound, cpuScaleMaxBound);
+    const hi = clamp(Math.max(backendMin, backendMax), cpuScaleMinBound, cpuScaleMaxBound);
+    setCpuRange((prev) => (prev[0] === lo && prev[1] === hi ? prev : [lo, hi]));
+  }, [activePerCoreCfg, activeCpuControl, cpuScaleMinBound, cpuScaleMaxBound, isEditingScale]);
+
+  useEffect(() => {
+    if (Date.now() < governorSyncBlockUntilRef.current) return;
+    const backendGovernor =
+      strField(activePerCoreCfg, "currentGovernor", "current_governor") ||
+      strField(activeCpuControl, "currentGovernor", "current_governor");
+    if (!backendGovernor) return;
+    if (!cpuGovernorOptions.includes(backendGovernor)) return;
+    setCpuGovernor((prev) => (prev === backendGovernor ? prev : backendGovernor));
+  }, [activePerCoreCfg, activeCpuControl, cpuGovernorOptions]);
+
+  useEffect(() => {
+    if (isEditingUncore) return;
+    if (Date.now() < uncoreSyncBlockUntilRef.current) return;
+    if (!canControlUncore) return;
+    const runtimeMin = uncoreRuntimeMin > 0 ? uncoreRuntimeMin : uncoreMin;
+    const runtimeMax = uncoreRuntimeMax > 0 ? uncoreRuntimeMax : uncoreMax;
+    if (runtimeMin <= 0 || runtimeMax <= 0) return;
+    const lo = clamp(Math.min(runtimeMin, runtimeMax), uncoreMin, uncoreMax);
+    const hi = clamp(Math.max(runtimeMin, runtimeMax), uncoreMin, uncoreMax);
+    setUncoreRange((prev) => (prev[0] === lo && prev[1] === hi ? prev : [lo, hi]));
+  }, [
+    isEditingUncore,
+    canControlUncore,
+    uncoreRuntimeMin,
+    uncoreRuntimeMax,
+    uncoreMin,
+    uncoreMax,
+    activeUncoreMetric,
+  ]);
+
+  useEffect(() => {
+    if (isEditingPowerCap) return;
+    if (Date.now() < powerCapSyncBlockUntilRef.current) return;
+    const current = cpuPowerCurrent > 0 ? cpuPowerCurrent : cpuPowerSliderMin;
+    const next = clamp(current, cpuPowerSliderMin, cpuPowerSliderMax);
+    setCpuPowerCap((prev) => (Math.abs(prev - next) < 1 ? prev : next));
+  }, [isEditingPowerCap, cpuPowerCurrent, cpuPowerSliderMin, cpuPowerSliderMax]);
+
+  useEffect(() => {
+    if (!cpuGovernorOptions.includes(cpuGovernor)) {
+      setCpuGovernor(cpuGovernorOptions[0] ?? "performance");
     }
-  }, [packageId, cpuPowerSliderMin, cpuPowerSliderMax]);
+  }, [cpuGovernor, cpuGovernorOptions]);
 
   useEffect(() => {
-    if (packageId < 0 || cpuPowerSyncedRef.current) return;
-    if (cpuPowerCurrent <= 0) return;
-    cpuPowerSyncedRef.current = true;
-    setCpuPowerCap(clamp(cpuPowerCurrent, cpuPowerSliderMin, cpuPowerSliderMax));
-  }, [packageId, cpuPowerCurrent, cpuPowerSliderMin, cpuPowerSliderMax]);
+    setCpuRange((prev) => [
+      clamp(prev[0], cpuScaleMinBound, cpuScaleMaxBound),
+      clamp(prev[1], cpuScaleMinBound, cpuScaleMaxBound),
+    ]);
+  }, [cpuScaleMinBound, cpuScaleMaxBound]);
 
   useEffect(() => {
     setCpuPowerCap((prev) => clamp(prev, cpuPowerSliderMin, cpuPowerSliderMax));
   }, [cpuPowerSliderMin, cpuPowerSliderMax]);
+
+  useEffect(() => {
+    setIsEditingScale(false);
+    setIsEditingUncore(false);
+    setIsEditingPowerCap(false);
+    scaleSyncBlockUntilRef.current = 0;
+    uncoreSyncBlockUntilRef.current = 0;
+    powerCapSyncBlockUntilRef.current = 0;
+    governorSyncBlockUntilRef.current = 0;
+  }, [packageId]);
 
   const tempByPackage = useMemo(() => {
     const map = new Map<number, number>();
@@ -371,11 +436,6 @@ export function CPUModuleView({
     return Math.max(100, sampleMax * 1.1);
   }, [cpuTempSeries]);
 
-  const activeCpuRapl = useMemo(
-    () => cpuRapl.find((r) => numField(r, "packageId", "package_id") === packageId) ?? null,
-    [cpuRapl, packageId],
-  );
-
   const coreIDsLabel = formatIDRanges((activeCpuDevice?.coreIds ?? activeCpuDevice?.core_ids ?? []) as number[]);
   const cpuChartSuffix = `${nodeId || "node"}-pkg${packageId}`;
 
@@ -421,13 +481,40 @@ export function CPUModuleView({
                 max={cpuScaleMaxBound}
                 step={1000}
                 value={cpuRange}
-                onValueChange={(v) => setCpuRange([v[0] ?? cpuRange[0], v[1] ?? cpuRange[1]])}
+                onValueChange={(v) => {
+                  const next: [number, number] = [
+                    clamp(v[0] ?? cpuRange[0], cpuScaleMinBound, cpuScaleMaxBound),
+                    clamp(v[1] ?? cpuRange[1], cpuScaleMinBound, cpuScaleMaxBound),
+                  ];
+                  const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
+                  setIsEditingScale(true);
+                  setCpuRange(fixed);
+                  scalingControl.send(fixed);
+                }}
+                onValueCommit={(v) => {
+                  const next: [number, number] = [
+                    clamp(v[0] ?? cpuRange[0], cpuScaleMinBound, cpuScaleMaxBound),
+                    clamp(v[1] ?? cpuRange[1], cpuScaleMinBound, cpuScaleMaxBound),
+                  ];
+                  const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
+                  setCpuRange(fixed);
+                  scalingControl.flush(fixed);
+                  scaleSyncBlockUntilRef.current = Date.now() + 200;
+                  setIsEditingScale(false);
+                }}
               />
             </div>
 
             <div>
               <div className="mb-1 text-xs text-slate-500">Governor</div>
-              <Select value={cpuGovernor} onValueChange={setCpuGovernor}>
+              <Select
+                value={cpuGovernor}
+                onValueChange={(value) => {
+                  setCpuGovernor(value);
+                  governorSyncBlockUntilRef.current = Date.now() + 200;
+                  governorControl.flush(value);
+                }}
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -439,33 +526,6 @@ export function CPUModuleView({
                   ))}
                 </SelectContent>
               </Select>
-            </div>
-
-            <div className="flex gap-2">
-              <Button
-                disabled={cmdPending}
-                onClick={() =>
-                  sendCommand("cpu_scaling_range", {
-                    packageId,
-                    minKhz: Math.round(cpuRange[0]),
-                    maxKhz: Math.round(cpuRange[1]),
-                  })
-                }
-              >
-                Apply Frequency
-              </Button>
-              <Button
-                variant="outline"
-                disabled={cmdPending}
-                onClick={() =>
-                  sendCommand("cpu_governor", {
-                    packageId,
-                    governor: cpuGovernor,
-                  })
-                }
-              >
-                Apply Governor
-              </Button>
             </div>
           </div>
 
@@ -481,7 +541,27 @@ export function CPUModuleView({
                   max={maxOr(uncoreMax, 1)}
                   step={1000}
                   value={uncoreRange}
-                  onValueChange={(v) => setUncoreRange([v[0] ?? uncoreRange[0], v[1] ?? uncoreRange[1]])}
+                  onValueChange={(v) => {
+                    const next: [number, number] = [
+                      clamp(v[0] ?? uncoreRange[0], uncoreMin, uncoreMax),
+                      clamp(v[1] ?? uncoreRange[1], uncoreMin, uncoreMax),
+                    ];
+                    const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
+                    setIsEditingUncore(true);
+                    setUncoreRange(fixed);
+                    if (canControlUncore) uncoreControl.send(fixed);
+                  }}
+                  onValueCommit={(v) => {
+                    const next: [number, number] = [
+                      clamp(v[0] ?? uncoreRange[0], uncoreMin, uncoreMax),
+                      clamp(v[1] ?? uncoreRange[1], uncoreMin, uncoreMax),
+                    ];
+                    const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
+                    setUncoreRange(fixed);
+                    if (canControlUncore) uncoreControl.flush(fixed);
+                    uncoreSyncBlockUntilRef.current = Date.now() + 200;
+                    setIsEditingUncore(false);
+                  }}
                   disabled={!canControlUncore}
                 />
               </div>
@@ -494,38 +574,20 @@ export function CPUModuleView({
                 max={cpuPowerSliderMax}
                 step={1000}
                 value={[cpuPowerCap]}
-                onValueChange={(v) => setCpuPowerCap(v[0] ?? cpuPowerCap)}
+                onValueChange={(v) => {
+                  const next = clamp(v[0] ?? cpuPowerCap, cpuPowerSliderMin, cpuPowerSliderMax);
+                  setIsEditingPowerCap(true);
+                  setCpuPowerCap(next);
+                  powerCapControl.send(next);
+                }}
+                onValueCommit={(v) => {
+                  const next = clamp(v[0] ?? cpuPowerCap, cpuPowerSliderMin, cpuPowerSliderMax);
+                  setCpuPowerCap(next);
+                  powerCapControl.flush(next);
+                  powerCapSyncBlockUntilRef.current = Date.now() + 200;
+                  setIsEditingPowerCap(false);
+                }}
               />
-            </div>
-
-            <div className="flex gap-2">
-              {showUncore ? (
-                <Button
-                  variant="outline"
-                  disabled={cmdPending || !canControlUncore}
-                  onClick={() =>
-                    sendCommand("cpu_uncore_range", {
-                      packageId,
-                      minKhz: Math.round(uncoreRange[0]),
-                      maxKhz: Math.round(uncoreRange[1]),
-                    })
-                  }
-                >
-                  Apply Uncore
-                </Button>
-              ) : null}
-              <Button
-                variant="outline"
-                disabled={cmdPending || packageId < 0}
-                onClick={() =>
-                  sendCommand("cpu_power_cap", {
-                    packageId,
-                    microwatt: Math.round(clamp(cpuPowerCap, cpuPowerSliderMin, cpuPowerSliderMax)),
-                  })
-                }
-              >
-                Apply Power Cap
-              </Button>
             </div>
           </div>
         </div>

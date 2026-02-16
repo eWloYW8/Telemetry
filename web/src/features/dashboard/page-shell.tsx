@@ -81,7 +81,9 @@ export function DashboardShell() {
     setCmdMsg("");
     try {
       const result = await postProtoCommand(selectedNodeId, commandType, payload);
-      setCmdMsg(result.message);
+      if (!result.ok) {
+        setCmdMsg(result.message);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "request failed";
       setCmdMsg(`${commandType}: ${message}`);

@@ -36,6 +36,7 @@ func (c *Controller) SetClockRange(gpuIndex int, smMinMHz, smMaxMHz, memMinMHz, 
 			return fmt.Errorf("set memory locked clocks: %s", ret.Error())
 		}
 	}
+	c.collector.updateLockRange(gpuIndex, smMinMHz, smMaxMHz, memMinMHz, memMaxMHz)
 	return nil
 }
 
