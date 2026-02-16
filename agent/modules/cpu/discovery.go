@@ -218,6 +218,14 @@ func DiscoverPackageTemperatureInputs(mappings []CoreMapping) map[int]string {
 		return output
 	}
 
+	// AMD platforms often expose k10temp/zenpower labels like Tdie/Tctl without
+	// an explicit "Package id N" marker. Try a dedicated hwmon mapping first.
+	fillAMDHwmonTemperatureInputs(output, packageSet, missing)
+	missing = missingPackages(packageIDs, output)
+	if len(missing) == 0 {
+		return output
+	}
+
 	zones := DiscoverThermalZones()
 	if len(zones) == 0 {
 		return output
@@ -233,6 +241,175 @@ func DiscoverPackageTemperatureInputs(mappings []CoreMapping) map[int]string {
 		}
 	}
 	return output
+}
+
+func missingPackages(packageIDs []int, selected map[int]string) []int {
+	out := make([]int, 0, len(packageIDs))
+	for _, pkgID := range packageIDs {
+		if _, ok := selected[pkgID]; ok {
+			continue
+		}
+		out = append(out, pkgID)
+	}
+	return out
+}
+
+func fillAMDHwmonTemperatureInputs(output map[int]string, packageSet map[int]struct{}, missing []int) {
+	if len(missing) == 0 {
+		return
+	}
+
+	type candidate struct {
+		path     string
+		numaNode int
+	}
+	candidates := make([]candidate, 0, len(missing))
+	assignedPaths := make(map[string]struct{}, len(output))
+	for _, path := range output {
+		assignedPaths[path] = struct{}{}
+	}
+
+	hwmons, _ := filepath.Glob("/sys/class/hwmon/hwmon*")
+	sort.Strings(hwmons)
+	for _, hwmon := range hwmons {
+		name, err := readTrimmed(filepath.Join(hwmon, "name"))
+		if err != nil {
+			continue
+		}
+		lname := strings.ToLower(name)
+		if !strings.Contains(lname, "k10temp") && !strings.Contains(lname, "zenpower") {
+			continue
+		}
+		input := pickAMDHwmonTempInput(hwmon)
+		if input == "" {
+			continue
+		}
+		if _, exists := assignedPaths[input]; exists {
+			continue
+		}
+		numa := -1
+		if v, err := readInt(filepath.Join(hwmon, "device", "numa_node")); err == nil {
+			numa = int(v)
+		}
+		candidates = append(candidates, candidate{path: input, numaNode: numa})
+	}
+	if len(candidates) == 0 {
+		return
+	}
+
+	missingSet := make(map[int]struct{}, len(missing))
+	for _, pkgID := range missing {
+		missingSet[pkgID] = struct{}{}
+	}
+
+	// Prefer direct numa_node -> package_id mapping when available.
+	usedPath := make(map[string]struct{}, len(candidates))
+	for _, c := range candidates {
+		if c.numaNode < 0 {
+			continue
+		}
+		if _, wanted := packageSet[c.numaNode]; !wanted {
+			continue
+		}
+		if _, needed := missingSet[c.numaNode]; !needed {
+			continue
+		}
+		if _, exists := output[c.numaNode]; exists {
+			continue
+		}
+		output[c.numaNode] = c.path
+		usedPath[c.path] = struct{}{}
+		delete(missingSet, c.numaNode)
+	}
+	if len(missingSet) == 0 {
+		return
+	}
+
+	remainingPkg := make([]int, 0, len(missingSet))
+	for pkgID := range missingSet {
+		remainingPkg = append(remainingPkg, pkgID)
+	}
+	sort.Ints(remainingPkg)
+
+	remainingCand := make([]candidate, 0, len(candidates))
+	for _, c := range candidates {
+		if _, used := usedPath[c.path]; used {
+			continue
+		}
+		remainingCand = append(remainingCand, c)
+	}
+	if len(remainingCand) == 0 {
+		return
+	}
+	sort.Slice(remainingCand, func(i, j int) bool { return remainingCand[i].path < remainingCand[j].path })
+
+	// Deterministic fallback: if counts align, map by sorted order.
+	if len(remainingCand) == len(remainingPkg) {
+		for i, pkgID := range remainingPkg {
+			if _, exists := output[pkgID]; exists {
+				continue
+			}
+			output[pkgID] = remainingCand[i].path
+		}
+		return
+	}
+
+	// Single-socket fallback.
+	if len(remainingPkg) == 1 {
+		output[remainingPkg[0]] = remainingCand[0].path
+	}
+}
+
+func pickAMDHwmonTempInput(hwmon string) string {
+	type labeledInput struct {
+		label string
+		path  string
+	}
+	labeled := make([]labeledInput, 0, 8)
+	labelFiles, _ := filepath.Glob(filepath.Join(hwmon, "temp*_label"))
+	for _, labelPath := range labelFiles {
+		label, err := readTrimmed(labelPath)
+		if err != nil {
+			continue
+		}
+		inputPath := strings.TrimSuffix(labelPath, "_label") + "_input"
+		if _, err := os.Stat(inputPath); err != nil {
+			continue
+		}
+		labeled = append(labeled, labeledInput{
+			label: strings.ToLower(strings.TrimSpace(label)),
+			path:  inputPath,
+		})
+	}
+	sort.Slice(labeled, func(i, j int) bool { return labeled[i].path < labeled[j].path })
+
+	pickLabel := func(match func(string) bool) string {
+		for _, item := range labeled {
+			if match(item.label) {
+				return item.path
+			}
+		}
+		return ""
+	}
+	if path := pickLabel(func(label string) bool { return strings.Contains(label, "tdie") }); path != "" {
+		return path
+	}
+	if path := pickLabel(func(label string) bool { return strings.Contains(label, "tctl") }); path != "" {
+		return path
+	}
+	if path := pickLabel(func(label string) bool { return strings.Contains(label, "package") }); path != "" {
+		return path
+	}
+	if len(labeled) > 0 {
+		return labeled[0].path
+	}
+
+	inputFiles, _ := filepath.Glob(filepath.Join(hwmon, "temp*_input"))
+	sort.Strings(inputFiles)
+	if len(inputFiles) > 0 {
+		return inputFiles[0]
+	}
+	return ""
 }
 
 func parsePackageIDFromLabel(label string) int {
