@@ -707,8 +707,51 @@ export function DashboardShell() {
     });
   }, [historyByCategory.memory]);
 
-  const networkSeries = useMemo(() => {
+  const networkInterfaceNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const ifc of networkIfsRaw) {
+      const name = strField(ifc, "name");
+      if (name) names.add(name);
+    }
+    for (const item of historyByCategory.network ?? []) {
+      const ifs = ((item.sample.networkMetrics ?? item.sample.network_metrics ?? {}).interfaces ?? []) as Array<Record<string, any>>;
+      for (const itf of ifs) {
+        const name = strField(itf, "name");
+        if (name) names.add(name);
+      }
+    }
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [networkIfsRaw, historyByCategory.network]);
+
+  const networkRxLines = useMemo<ChartLineDef[]>(
+    () =>
+      networkInterfaceNames.map((name, idx) => ({
+        key: `if_rx_mb_${idx}`,
+        label: name,
+        color: storageLinePalette[idx % storageLinePalette.length],
+      })),
+    [networkInterfaceNames],
+  );
+
+  const networkTxLines = useMemo<ChartLineDef[]>(
+    () =>
+      networkInterfaceNames.map((name, idx) => ({
+        key: `if_tx_mb_${idx}`,
+        label: name,
+        color: storageLinePalette[idx % storageLinePalette.length],
+      })),
+    [networkInterfaceNames],
+  );
+
+  const networkPerIfSeries = useMemo(() => {
     const list = historyByCategory.network ?? [];
+    if (networkInterfaceNames.length === 0) return [] as Array<Record<string, number | string>>;
+
+    const ifIndex = new Map<string, number>();
+    for (let i = 0; i < networkInterfaceNames.length; i += 1) {
+      ifIndex.set(networkInterfaceNames[i], i);
+    }
+
     const rows: Array<Record<string, number | string>> = [];
     for (let i = 1; i < list.length; i += 1) {
       const prev = list[i - 1];
@@ -719,10 +762,14 @@ export function DashboardShell() {
       const prevByName = new Map<string, Record<string, any>>();
       for (const p of prevIfs) prevByName.set(strField(p, "name"), p);
 
-      let rxBpsTotal = 0;
-      let txBpsTotal = 0;
+      const row: Record<string, number | string> = {
+        tsNs: cur.atNs.toString(),
+        time: nsToTimeLabel(cur.atNs),
+      };
       for (const c of curIfs) {
         const name = strField(c, "name");
+        const idx = ifIndex.get(name);
+        if (idx === undefined) continue;
         const p = prevByName.get(name);
         if (!p) continue;
 
@@ -740,20 +787,14 @@ export function DashboardShell() {
           curTs,
           prevTs,
         );
-
-        if (rxRate !== null) rxBpsTotal += rxRate;
-        if (txRate !== null) txBpsTotal += txRate;
+        if (rxRate !== null) row[`if_rx_mb_${idx}`] = rxRate / 1024 / 1024;
+        if (txRate !== null) row[`if_tx_mb_${idx}`] = txRate / 1024 / 1024;
       }
 
-      rows.push({
-        tsNs: cur.atNs.toString(),
-        time: nsToTimeLabel(cur.atNs),
-        rxMBps: rxBpsTotal / 1024 / 1024,
-        txMBps: txBpsTotal / 1024 / 1024,
-      });
+      rows.push(row);
     }
     return rows;
-  }, [historyByCategory.network]);
+  }, [historyByCategory.network, networkInterfaceNames]);
 
   const storageDiskNames = useMemo(() => {
     const names = new Set<string>();
@@ -1414,7 +1455,10 @@ export function DashboardShell() {
                   </div>
                 </Section>
 
-                <MetricChart chartId="network-throughput" title="Network Throughput" yLabel="MB/s" data={networkSeries} lines={[{ key: "rxMBps", label: "RX", color: "#0f766e" }, { key: "txMBps", label: "TX", color: "#1d4ed8" }]} yDomain={[0, "auto"]} />
+                <div className="grid gap-3 lg:grid-cols-2">
+                  <MetricChart chartId="network-rx-bytes" title="Network RX Bytes" yLabel="MB/s" data={networkPerIfSeries} lines={networkRxLines} yDomain={[0, "auto"]} />
+                  <MetricChart chartId="network-tx-bytes" title="Network TX Bytes" yLabel="MB/s" data={networkPerIfSeries} lines={networkTxLines} yDomain={[0, "auto"]} />
+                </div>
               </TabsContent>
 
               <TabsContent value="process" className="mt-3 space-y-3">

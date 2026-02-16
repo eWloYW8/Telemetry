@@ -13,6 +13,7 @@ import (
 
 type staticDisk struct {
 	name       string
+	ioName     string
 	mountpoint string
 	fsType     string
 	totalBytes uint64
@@ -70,7 +71,11 @@ func (c *Collector) Collect() (*Metrics, error) {
 		if d.totalBytes > free {
 			used = d.totalBytes - free
 		}
-		io := ioCounters[d.name]
+		ioName := d.ioName
+		if ioName == "" {
+			ioName = d.name
+		}
+		io := ioCounters[ioName]
 		sampledAt := time.Now().UnixNano()
 		out.Disks = append(out.Disks, DiskMetrics{
 			Name:          d.name,
@@ -91,14 +96,21 @@ func discoverStaticDisks() []staticDisk {
 	if err != nil {
 		return nil
 	}
+	diskstatsByDev := readDiskStatsNameByDev()
 	out := make([]staticDisk, 0, len(mounts))
 	for _, m := range mounts {
 		var st syscall.Statfs_t
 		if err := syscall.Statfs(m.mountpoint, &st); err != nil {
 			continue
 		}
+		name := filepath.Base(m.device)
+		ioName := resolveDiskstatsName(m.device, diskstatsByDev)
+		if ioName == "" {
+			ioName = name
+		}
 		out = append(out, staticDisk{
-			name:       filepath.Base(m.device),
+			name:       name,
+			ioName:     ioName,
 			mountpoint: m.mountpoint,
 			fsType:     m.fsType,
 			totalBytes: st.Blocks * uint64(st.Bsize),
@@ -176,4 +188,57 @@ func readDiskStats() map[string]diskIOCounters {
 		}
 	}
 	return out
+}
+
+type diskDevKey struct {
+	major uint32
+	minor uint32
+}
+
+func readDiskStatsNameByDev() map[diskDevKey]string {
+	b, err := os.ReadFile("/proc/diskstats")
+	if err != nil {
+		return map[diskDevKey]string{}
+	}
+	out := make(map[diskDevKey]string, 64)
+	for _, line := range strings.Split(string(b), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		major, errMajor := strconv.ParseUint(fields[0], 10, 32)
+		minor, errMinor := strconv.ParseUint(fields[1], 10, 32)
+		if errMajor != nil || errMinor != nil {
+			continue
+		}
+		name := fields[2]
+		out[diskDevKey{major: uint32(major), minor: uint32(minor)}] = name
+	}
+	return out
+}
+
+func resolveDiskstatsName(devicePath string, byDev map[diskDevKey]string) string {
+	if devicePath == "" || len(byDev) == 0 {
+		return ""
+	}
+	info, err := os.Stat(devicePath)
+	if err != nil {
+		return ""
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return ""
+	}
+	major, minor := linuxDevMajorMinor(uint64(st.Rdev))
+	if name, ok := byDev[diskDevKey{major: major, minor: minor}]; ok {
+		return name
+	}
+	return ""
+}
+
+// linuxDevMajorMinor follows Linux kernel gnu_dev_major/minor decoding for dev_t.
+func linuxDevMajorMinor(dev uint64) (major uint32, minor uint32) {
+	major = uint32(((dev >> 8) & 0xfff) | ((dev >> 32) & 0xfffff000))
+	minor = uint32((dev & 0xff) | ((dev >> 12) & 0xffffff00))
+	return major, minor
 }
