@@ -522,13 +522,22 @@ func (c *Collector) PackageControls() []PackageControlInfo {
 			continue
 		}
 		ctrl := controlsByPkg[pkgID]
-		current, minVal, maxVal, _, _, readOK := readFirstUncoreMetrics(domains)
+		current, minVal, maxVal, initMin, initMax, readOK := readFirstUncoreMetrics(domains)
 		if !readOK {
 			continue
 		}
 		ctrl.UncoreCurrentKHz = current
-		ctrl.UncoreMinKHz = minVal
-		ctrl.UncoreMaxKHz = maxVal
+		// Use initial_* as stable control bounds; min/max may be current runtime settings.
+		if initMin > 0 {
+			ctrl.UncoreMinKHz = initMin
+		} else {
+			ctrl.UncoreMinKHz = minVal
+		}
+		if initMax > 0 {
+			ctrl.UncoreMaxKHz = initMax
+		} else {
+			ctrl.UncoreMaxKHz = maxVal
+		}
 	}
 
 	if c.raplBackend != nil {

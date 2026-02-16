@@ -38,6 +38,7 @@ function numField(obj: Record<string, any> | null | undefined, ...keys: string[]
     const value = obj[key];
     if (value === undefined || value === null) continue;
     if (typeof value === "number") return value;
+    if (typeof value === "boolean") return value ? 1 : 0;
     if (typeof value === "string") {
       const parsed = Number(value);
       if (Number.isFinite(parsed)) return parsed;
@@ -65,6 +66,26 @@ function sampledAtNs(v: Record<string, any>, fallback: bigint): bigint {
   const sampled = toBigIntNs(v.sampledAtUnixNano ?? v.sampled_at_unix_nano);
   if (sampled > 0n) return sampled;
   return fallback;
+}
+
+function formatIDRanges(ids: number[]): string {
+  if (!ids || ids.length === 0) return "-";
+  const sorted = Array.from(new Set(ids)).sort((a, b) => a - b);
+  const segments: string[] = [];
+  let start = sorted[0];
+  let prev = sorted[0];
+  for (let i = 1; i < sorted.length; i += 1) {
+    const cur = sorted[i];
+    if (cur === prev + 1) {
+      prev = cur;
+      continue;
+    }
+    segments.push(start === prev ? `${start}` : `${start}-${prev}`);
+    start = cur;
+    prev = cur;
+  }
+  segments.push(start === prev ? `${start}` : `${start}-${prev}`);
+  return segments.join(", ");
 }
 
 function moduleMeta(registration: Record<string, any> | null | undefined, moduleName: string) {
@@ -181,6 +202,7 @@ export function DashboardShell() {
   const cpuCores = (cpuMediumRaw?.cores ?? []) as Array<Record<string, any>>;
   const cpuTemps = (cpuMediumRaw?.temperatures ?? []) as Array<Record<string, any>>;
   const cpuRapl = (cpuUltraRaw?.rapl ?? []) as Array<Record<string, any>>;
+  const cpuUncoreNow = (cpuUltraRaw?.uncore ?? []) as Array<Record<string, any>>;
   const processRowsRaw = (processRaw?.processes ?? []) as Array<Record<string, any>>;
 
   const historyByCategory = history[selectedNodeId] ?? {};
@@ -261,18 +283,52 @@ export function DashboardShell() {
   }, [cpuPackageIds, cpuDeviceTab]);
 
   const uncoreControl = activeCpuControl;
-  const uncoreMin = numField(uncoreControl, "uncoreMinKhz", "uncore_min_khz");
-  const uncoreMax = numField(uncoreControl, "uncoreMaxKhz", "uncore_max_khz");
+  const activeUncoreMetric = useMemo(
+    () => cpuUncoreNow.find((u) => numField(u, "packageId", "package_id") === activeCpuPackageID) ?? null,
+    [cpuUncoreNow, activeCpuPackageID],
+  );
+  const uncoreRuntimeMin = numField(activeUncoreMetric, "minKhz", "min_khz");
+  const uncoreRuntimeMax = numField(activeUncoreMetric, "maxKhz", "max_khz");
+  const uncoreInitialMin = numField(activeUncoreMetric, "initialMinKhz", "initial_min_khz");
+  const uncoreInitialMax = numField(activeUncoreMetric, "initialMaxKhz", "initial_max_khz");
+  const uncoreMin = uncoreInitialMin || numField(uncoreControl, "uncoreMinKhz", "uncore_min_khz");
+  const uncoreMax = uncoreInitialMax || numField(uncoreControl, "uncoreMaxKhz", "uncore_max_khz");
+  const cpuSupportsUncore = numField(cpuStatic, "supportsIntelUncore", "supports_intel_uncore") > 0;
+  const canControlUncore = uncoreMin > 0 && uncoreMax > uncoreMin;
+  const uncoreSyncPackageRef = useRef<number>(-1);
+  const uncoreSyncedRef = useRef(false);
 
   useEffect(() => {
-    if (uncoreMin <= 0 || uncoreMax <= 0 || uncoreMax < uncoreMin) return;
+    if (activeCpuPackageID < 0) return;
+    if (uncoreSyncPackageRef.current !== activeCpuPackageID) {
+      uncoreSyncPackageRef.current = activeCpuPackageID;
+      uncoreSyncedRef.current = false;
+    }
+  }, [activeCpuPackageID]);
+
+  useEffect(() => {
+    if (!canControlUncore || uncoreSyncedRef.current) return;
+    const runtimeMin = uncoreRuntimeMin > 0 ? uncoreRuntimeMin : uncoreMin;
+    const runtimeMax = uncoreRuntimeMax > 0 ? uncoreRuntimeMax : uncoreMax;
+    if (runtimeMax < runtimeMin || runtimeMin <= 0) return;
+    const lo = clamp(runtimeMin, uncoreMin, uncoreMax);
+    const hi = clamp(runtimeMax, uncoreMin, uncoreMax);
+    const next: [number, number] = [Math.min(lo, hi), Math.max(lo, hi)];
+    uncoreSyncedRef.current = true;
+    if (next[0] !== uncoreRange[0] || next[1] !== uncoreRange[1]) {
+      setUncoreRange(next);
+    }
+  }, [canControlUncore, uncoreRuntimeMin, uncoreRuntimeMax, uncoreMin, uncoreMax, uncoreRange]);
+
+  useEffect(() => {
+    if (!canControlUncore) return;
     const lo = clamp(uncoreRange[0], uncoreMin, uncoreMax);
     const hi = clamp(uncoreRange[1], uncoreMin, uncoreMax);
     const next: [number, number] = [Math.min(lo, hi), Math.max(lo, hi)];
     if (next[0] !== uncoreRange[0] || next[1] !== uncoreRange[1]) {
       setUncoreRange(next);
     }
-  }, [uncoreMin, uncoreMax, uncoreRange]);
+  }, [canControlUncore, uncoreMin, uncoreMax, uncoreRange]);
 
   const powerControl = activeCpuControl;
   const cpuPowerMin = numField(powerControl, "powerCapMinMicroW", "power_cap_min_micro_w");
@@ -328,6 +384,12 @@ export function DashboardShell() {
   const gpuPowerMinRaw = numField(activeGPUStatic, "powerMinMilliwatt", "power_min_milliwatt");
   const gpuPowerMaxRaw = numField(activeGPUStatic, "powerMaxMilliwatt", "power_max_milliwatt");
   const gpuPowerCurrent = numField(activeGPUFast, "powerLimitMilliwatt", "power_limit_milliwatt");
+  const gpuSMMinRaw = numField(activeGPUStatic, "smClockMinMhz", "sm_clock_min_mhz");
+  const gpuSMMaxRaw = numField(activeGPUStatic, "smClockMaxMhz", "sm_clock_max_mhz");
+  const gpuMemMinRaw = numField(activeGPUStatic, "memClockMinMhz", "mem_clock_min_mhz");
+  const gpuMemMaxRaw = numField(activeGPUStatic, "memClockMaxMhz", "mem_clock_max_mhz");
+  const gpuCanTuneSM = gpuSMMinRaw > 0 && gpuSMMaxRaw > gpuSMMinRaw;
+  const gpuCanTuneMem = gpuMemMinRaw > 0 && gpuMemMaxRaw > gpuMemMinRaw;
   const gpuPowerMinBound = useMemo(() => {
     if (gpuPowerMinRaw > 0) return gpuPowerMinRaw;
     return 30_000;
@@ -376,24 +438,34 @@ export function DashboardShell() {
 
   useEffect(() => {
     if (!activeGPUStatic) return;
-    const smMin = numField(activeGPUStatic, "smClockMinMhz", "sm_clock_min_mhz");
-    const smMax = numField(activeGPUStatic, "smClockMaxMhz", "sm_clock_max_mhz");
-    if (smMin > 0 && smMax >= smMin) {
-      const lo = clamp(gpuSMRange[0] || smMin, smMin, smMax);
-      const hi = clamp(gpuSMRange[1] || smMax, smMin, smMax);
+    if (gpuCanTuneSM) {
+      const lo = clamp(gpuSMRange[0] || gpuSMMinRaw, gpuSMMinRaw, gpuSMMaxRaw);
+      const hi = clamp(gpuSMRange[1] || gpuSMMaxRaw, gpuSMMinRaw, gpuSMMaxRaw);
       const next: [number, number] = [Math.min(lo, hi), Math.max(lo, hi)];
       if (next[0] !== gpuSMRange[0] || next[1] !== gpuSMRange[1]) setGpuSMRange(next);
+    } else if (gpuSMRange[0] !== 0 || gpuSMRange[1] !== 0) {
+      setGpuSMRange([0, 0]);
     }
 
-    const memMin = numField(activeGPUStatic, "memClockMinMhz", "mem_clock_min_mhz");
-    const memMax = numField(activeGPUStatic, "memClockMaxMhz", "mem_clock_max_mhz");
-    if (memMin > 0 && memMax >= memMin) {
-      const lo = clamp(gpuMemRange[0] || memMin, memMin, memMax);
-      const hi = clamp(gpuMemRange[1] || memMax, memMin, memMax);
+    if (gpuCanTuneMem) {
+      const lo = clamp(gpuMemRange[0] || gpuMemMinRaw, gpuMemMinRaw, gpuMemMaxRaw);
+      const hi = clamp(gpuMemRange[1] || gpuMemMaxRaw, gpuMemMinRaw, gpuMemMaxRaw);
       const next: [number, number] = [Math.min(lo, hi), Math.max(lo, hi)];
       if (next[0] !== gpuMemRange[0] || next[1] !== gpuMemRange[1]) setGpuMemRange(next);
+    } else if (gpuMemRange[0] !== 0 || gpuMemRange[1] !== 0) {
+      setGpuMemRange([0, 0]);
     }
-  }, [activeGPUStatic, gpuSMRange, gpuMemRange]);
+  }, [
+    activeGPUStatic,
+    gpuCanTuneSM,
+    gpuCanTuneMem,
+    gpuSMMinRaw,
+    gpuSMMaxRaw,
+    gpuMemMinRaw,
+    gpuMemMaxRaw,
+    gpuSMRange,
+    gpuMemRange,
+  ]);
 
   useEffect(() => {
     if (activeGPUIndex < 0) return;
@@ -559,6 +631,22 @@ export function DashboardShell() {
     }
     return rows;
   }, [historyByCategory.cpu_ultra_fast, activeCpuPackageID]);
+
+  const cpuUncoreSeries = useMemo(() => {
+    const list = historyByCategory.cpu_ultra_fast ?? [];
+    return list.map((item) => {
+      const payload = item.sample.cpuUltraMetrics ?? item.sample.cpu_ultra_metrics ?? {};
+      const uncore = (payload.uncore ?? []) as Array<Record<string, any>>;
+      const pkg = uncore.find((u) => numField(u, "packageId", "package_id") === activeCpuPackageID) ?? null;
+      const currentMHz = numField(pkg, "currentKhz", "current_khz") / 1000;
+      return { tsNs: item.atNs.toString(), time: nsToTimeLabel(item.atNs), currentMHz };
+    });
+  }, [historyByCategory.cpu_ultra_fast, activeCpuPackageID]);
+  const hasUncoreSample = useMemo(
+    () => cpuUncoreSeries.some((row) => numField(row, "currentMHz") > 0),
+    [cpuUncoreSeries],
+  );
+  const showUncore = cpuSupportsUncore || canControlUncore || hasUncoreSample;
 
   const gpuUtilSeries = useMemo(() => {
     const list = historyByCategory.gpu_fast ?? [];
@@ -749,6 +837,12 @@ export function DashboardShell() {
     return Math.max(sampleMax, 1);
   }, [activeCpuControl, cpuPowerSeries]);
 
+  const cpuUncoreMaxBound = useMemo(() => {
+    const boundMHz = uncoreMax > 0 ? uncoreMax / 1000 : 0;
+    const sampleMax = cpuUncoreSeries.reduce((acc, row) => Math.max(acc, numField(row, "currentMHz")), 0);
+    return Math.max(boundMHz, sampleMax, 1);
+  }, [uncoreMax, cpuUncoreSeries]);
+
   const cpuTempMaxBound = useMemo(() => {
     const sampleMax = cpuTempSeries.reduce((acc, row) => Math.max(acc, numField(row, "tempC")), 0);
     return Math.max(100, sampleMax * 1.1);
@@ -897,7 +991,7 @@ export function DashboardShell() {
                         <StatRow name="Threads/Core" value={numField(cpuStatic, "threadsPerCore", "threads_per_core")} />
                         <StatRow name="Scale HW Min" value={formatKHz(numField(activeCpuControl, "scalingHwMinKhz", "scaling_hw_min_khz"))} />
                         <StatRow name="Scale HW Max" value={formatKHz(numField(activeCpuControl, "scalingHwMaxKhz", "scaling_hw_max_khz"))} />
-                        <StatRow name="Core IDs" value={((activeCpuDevice?.coreIds ?? activeCpuDevice?.core_ids ?? []) as number[]).join(", ") || "-"} />
+                        <StatRow name="Core IDs" value={formatIDRanges((activeCpuDevice?.coreIds ?? activeCpuDevice?.core_ids ?? []) as number[])} />
                       </div>
                     </Section>
 
@@ -957,18 +1051,20 @@ export function DashboardShell() {
                         </div>
 
                         <div className="space-y-3 border border-slate-200 p-3">
-                          <div className="text-sm font-medium">Uncore and RAPL</div>
-                          <div>
-                            <div className="mb-1 text-xs text-slate-500">Uncore Range {formatKHz(uncoreRange[0])} ~ {formatKHz(uncoreRange[1])}</div>
-                            <Slider
-                              min={maxOr(uncoreMin, 1)}
-                              max={maxOr(uncoreMax, 1)}
-                              step={1000}
-                              value={uncoreRange}
-                              onValueChange={(v) => setUncoreRange([v[0] ?? uncoreRange[0], v[1] ?? uncoreRange[1]])}
-                              disabled={uncoreMin <= 0 || uncoreMax <= 0 || uncoreMax < uncoreMin}
-                            />
-                          </div>
+                          <div className="text-sm font-medium">{showUncore ? "Uncore and RAPL" : "RAPL"}</div>
+                          {showUncore ? (
+                            <div>
+                              <div className="mb-1 text-xs text-slate-500">Uncore Range {formatKHz(uncoreRange[0])} ~ {formatKHz(uncoreRange[1])}</div>
+                              <Slider
+                                min={maxOr(uncoreMin, 1)}
+                                max={maxOr(uncoreMax, 1)}
+                                step={1000}
+                                value={uncoreRange}
+                                onValueChange={(v) => setUncoreRange([v[0] ?? uncoreRange[0], v[1] ?? uncoreRange[1]])}
+                                disabled={!canControlUncore}
+                              />
+                            </div>
+                          ) : null}
 
                           <div>
                             <div className="mb-1 text-xs text-slate-500">Power Cap {formatPowerMicroW(cpuPowerCap)}</div>
@@ -982,13 +1078,15 @@ export function DashboardShell() {
                           </div>
 
                           <div className="flex gap-2">
-                            <Button
-                              variant="outline"
-                              disabled={cmdPending || uncoreMin <= 0 || uncoreMax <= 0 || uncoreMax < uncoreMin}
-                              onClick={() => sendCommand("cpu_uncore_range", { packageId: activeCpuPackageID, minKhz: Math.round(uncoreRange[0]), maxKhz: Math.round(uncoreRange[1]) })}
-                            >
-                              Apply Uncore
-                            </Button>
+                            {showUncore ? (
+                              <Button
+                                variant="outline"
+                                disabled={cmdPending || !canControlUncore}
+                                onClick={() => sendCommand("cpu_uncore_range", { packageId: activeCpuPackageID, minKhz: Math.round(uncoreRange[0]), maxKhz: Math.round(uncoreRange[1]) })}
+                              >
+                                Apply Uncore
+                              </Button>
+                            ) : null}
                             <Button
                               variant="outline"
                               disabled={cmdPending || activeCpuPackageID < 0}
@@ -1010,6 +1108,9 @@ export function DashboardShell() {
                     <div className="grid gap-3 lg:grid-cols-2">
                       <MetricChart chartId={`cpu-utilization-${cpuChartSuffix}`} title={`CPU ${activeCpuPackageID} Utilization`} yLabel="%" data={cpuUsageSeries} lines={[{ key: "utilPct", label: "Utilization", color: "#0f766e" }]} yDomain={[0, 100]} />
                       <MetricChart chartId={`cpu-frequency-${cpuChartSuffix}`} title={`CPU ${activeCpuPackageID} Frequency`} yLabel="MHz" data={cpuFreqSeries} lines={[{ key: "avgMHz", label: "Average", color: "#0369a1" }]} yDomain={[0, cpuScaleMaxBound / 1000]} />
+                      {showUncore ? (
+                        <MetricChart chartId={`cpu-uncore-frequency-${cpuChartSuffix}`} title={`CPU ${activeCpuPackageID} Uncore Frequency`} yLabel="MHz" data={cpuUncoreSeries} lines={[{ key: "currentMHz", label: "Uncore", color: "#15803d" }]} yDomain={[0, cpuUncoreMaxBound]} />
+                      ) : null}
                       <MetricChart chartId={`cpu-temperature-${cpuChartSuffix}`} title={`CPU ${activeCpuPackageID} Temperature`} yLabel="C" data={cpuTempSeries} lines={[{ key: "tempC", label: "Temperature", color: "#dc2626" }]} yDomain={[0, cpuTempMaxBound]} />
                       <MetricChart chartId={`cpu-package-power-${cpuChartSuffix}`} title={`CPU ${activeCpuPackageID} Package Power`} yLabel="W" data={cpuPowerSeries} lines={[{ key: "powerW", label: "Power", color: "#7c3aed" }]} yDomain={[0, cpuPowerMaxBound]} />
                     </div>
@@ -1026,10 +1127,12 @@ export function DashboardShell() {
                               : "-"
                           }
                         />
-                        <StatRow
-                          name="Uncore Range"
-                          value={uncoreMin > 0 && uncoreMax > 0 ? `${formatKHz(uncoreMin)} ~ ${formatKHz(uncoreMax)}` : "unsupported"}
-                        />
+                        {showUncore ? (
+                          <StatRow
+                            name="Uncore Range"
+                            value={canControlUncore ? `${formatKHz(uncoreMin)} ~ ${formatKHz(uncoreMax)}` : "unsupported"}
+                          />
+                        ) : null}
                       </div>
                     </Section>
                   </>
@@ -1047,37 +1150,45 @@ export function DashboardShell() {
                       <div className="grid gap-3 lg:grid-cols-2">
                         <div className="space-y-3 border border-slate-200 p-3">
                           <div className="text-sm font-medium">Clock Range</div>
-                          <div>
-                            <div className="mb-1 text-xs text-slate-500">SM Clock {formatNumber(gpuSMRange[0])} ~ {formatNumber(gpuSMRange[1])} MHz</div>
-                            <Slider
-                              min={maxOr(numField(activeGPUStatic, "smClockMinMhz", "sm_clock_min_mhz"), 1)}
-                              max={maxOr(numField(activeGPUStatic, "smClockMaxMhz", "sm_clock_max_mhz"), 1)}
-                              step={1}
-                              value={gpuSMRange}
-                              onValueChange={(v) => setGpuSMRange([v[0] ?? gpuSMRange[0], v[1] ?? gpuSMRange[1]])}
-                            />
-                          </div>
+                          {gpuCanTuneSM ? (
+                            <div>
+                              <div className="mb-1 text-xs text-slate-500">SM Clock {formatNumber(gpuSMRange[0])} ~ {formatNumber(gpuSMRange[1])} MHz</div>
+                              <Slider
+                                min={maxOr(gpuSMMinRaw, 1)}
+                                max={maxOr(gpuSMMaxRaw, 1)}
+                                step={1}
+                                value={gpuSMRange}
+                                onValueChange={(v) => setGpuSMRange([v[0] ?? gpuSMRange[0], v[1] ?? gpuSMRange[1]])}
+                              />
+                            </div>
+                          ) : null}
 
-                          <div>
-                            <div className="mb-1 text-xs text-slate-500">Memory Clock {formatNumber(gpuMemRange[0])} ~ {formatNumber(gpuMemRange[1])} MHz</div>
-                            <Slider
-                              min={maxOr(numField(activeGPUStatic, "memClockMinMhz", "mem_clock_min_mhz"), 1)}
-                              max={maxOr(numField(activeGPUStatic, "memClockMaxMhz", "mem_clock_max_mhz"), 1)}
-                              step={1}
-                              value={gpuMemRange}
-                              onValueChange={(v) => setGpuMemRange([v[0] ?? gpuMemRange[0], v[1] ?? gpuMemRange[1]])}
-                            />
-                          </div>
+                          {gpuCanTuneMem ? (
+                            <div>
+                              <div className="mb-1 text-xs text-slate-500">Memory Clock {formatNumber(gpuMemRange[0])} ~ {formatNumber(gpuMemRange[1])} MHz</div>
+                              <Slider
+                                min={maxOr(gpuMemMinRaw, 1)}
+                                max={maxOr(gpuMemMaxRaw, 1)}
+                                step={1}
+                                value={gpuMemRange}
+                                onValueChange={(v) => setGpuMemRange([v[0] ?? gpuMemRange[0], v[1] ?? gpuMemRange[1]])}
+                              />
+                            </div>
+                          ) : null}
+
+                          {!gpuCanTuneSM && !gpuCanTuneMem ? (
+                            <div className="text-xs text-slate-500">Clock range control unsupported on this GPU.</div>
+                          ) : null}
 
                           <Button
-                            disabled={cmdPending}
+                            disabled={cmdPending || (!gpuCanTuneSM && !gpuCanTuneMem)}
                             onClick={() =>
                               sendCommand("gpu_clock_range", {
                                 gpuIndex: activeGPUIndex,
-                                smMinMhz: Math.round(gpuSMRange[0]),
-                                smMaxMhz: Math.round(gpuSMRange[1]),
-                                memMinMhz: Math.round(gpuMemRange[0]),
-                                memMaxMhz: Math.round(gpuMemRange[1]),
+                                smMinMhz: gpuCanTuneSM ? Math.round(gpuSMRange[0]) : 0,
+                                smMaxMhz: gpuCanTuneSM ? Math.round(gpuSMRange[1]) : 0,
+                                memMinMhz: gpuCanTuneMem ? Math.round(gpuMemRange[0]) : 0,
+                                memMaxMhz: gpuCanTuneMem ? Math.round(gpuMemRange[1]) : 0,
                               })
                             }
                           >
