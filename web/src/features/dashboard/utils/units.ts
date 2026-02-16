@@ -1,6 +1,9 @@
 export function formatNumber(v: number, digits = 3): string {
   if (!Number.isFinite(v)) return "0";
-  return v.toFixed(digits);
+  if (digits <= 0) return `${Math.round(v)}`;
+  const fixed = v.toFixed(digits);
+  const trimmed = fixed.replace(/(\.\d*?[1-9])0+$|\.0+$/, "$1");
+  return trimmed === "-0" ? "0" : trimmed;
 }
 
 export function formatPercent(v: number): string {
@@ -20,11 +23,11 @@ export function formatBytes(v: number): string {
 }
 
 export function formatPowerMicroW(v: number): string {
-  return `${(v / 1_000_000).toFixed(3)} W`;
+  return `${formatNumber(v / 1_000_000, 3)} W`;
 }
 
 export function formatPowerMilliW(v: number): string {
-  return `${(v / 1000).toFixed(3)} W`;
+  return `${formatNumber(v / 1000, 3)} W`;
 }
 
 export function formatKHz(v: number): string {
