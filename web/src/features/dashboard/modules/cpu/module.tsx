@@ -1,0 +1,614 @@
+"use client";
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Cpu, Thermometer } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Slider } from "@/components/ui/slider";
+
+import { MetricChart } from "../../components/charts/metric-chart";
+import { CpuCoreDenseTable } from "../../components/cpu/core-dense-table";
+import type { CpuCoreDenseRow, RawHistorySample } from "../../types";
+import { deltaRate, maxOr } from "../../utils/rates";
+import { nsToTimeLabel } from "../../utils/time";
+import { clamp, formatKHz, formatNumber, formatPowerMicroW } from "../../utils/units";
+import { formatIDRanges, moduleMeta, numField, sampledAtNs, strField } from "../shared/data";
+import { Section, StatRow } from "../shared/section";
+
+type CPUModuleViewProps = {
+  nodeId: string;
+  packageId: number;
+  registration: Record<string, any> | null;
+  latestRaw: Record<string, Record<string, any>>;
+  historyByCategory: Record<string, RawHistorySample[]>;
+  cmdPending: boolean;
+  cmdMsg: string;
+  sendCommand: (commandType: string, payload: Record<string, unknown>) => void;
+};
+
+export function cpuPackageIDsFromRegistration(registration: Record<string, any> | null): number[] {
+  const cpuMeta = moduleMeta(registration, "cpu");
+  const cpuDevices = (cpuMeta?.devices ?? []) as Array<Record<string, any>>;
+  const cpuControls = (cpuMeta?.packageControls ?? cpuMeta?.package_controls ?? []) as Array<Record<string, any>>;
+  const ids = [
+    ...cpuDevices.map((d) => numField(d, "packageId", "package_id")),
+    ...cpuControls.map((c) => numField(c, "packageId", "package_id")),
+  ].filter((v) => v >= 0);
+  return Array.from(new Set(ids)).sort((a, b) => a - b);
+}
+
+export function CPUModuleView({
+  nodeId,
+  packageId,
+  registration,
+  latestRaw,
+  historyByCategory,
+  cmdPending,
+  cmdMsg,
+  sendCommand,
+}: CPUModuleViewProps) {
+  const cpuMeta = moduleMeta(registration, "cpu");
+  const cpuStatic = (cpuMeta?.static ?? null) as Record<string, any> | null;
+  const cpuDevices = (cpuMeta?.devices ?? []) as Array<Record<string, any>>;
+  const cpuControls = ((cpuMeta?.packageControls ?? cpuMeta?.package_controls ?? []) as Array<Record<string, any>>)
+    .slice()
+    .sort((a, b) => numField(a, "packageId", "package_id") - numField(b, "packageId", "package_id"));
+
+  const activeCpuDevice = useMemo(
+    () => cpuDevices.find((d) => numField(d, "packageId", "package_id") === packageId) ?? null,
+    [cpuDevices, packageId],
+  );
+  const activeCpuControl = useMemo(
+    () => cpuControls.find((c) => numField(c, "packageId", "package_id") === packageId) ?? null,
+    [cpuControls, packageId],
+  );
+
+  const cpuMediumRaw = latestRaw.cpu_medium?.cpuMediumMetrics ?? latestRaw.cpu_medium?.cpu_medium_metrics ?? null;
+  const cpuUltraRaw =
+    latestRaw.cpu_ultra_fast?.cpuUltraMetrics ?? latestRaw.cpu_ultra_fast?.cpu_ultra_metrics ?? null;
+  const cpuCores = (cpuMediumRaw?.cores ?? []) as Array<Record<string, any>>;
+  const cpuTemps = (cpuMediumRaw?.temperatures ?? []) as Array<Record<string, any>>;
+  const cpuRapl = (cpuUltraRaw?.rapl ?? []) as Array<Record<string, any>>;
+  const cpuUncoreNow = (cpuUltraRaw?.uncore ?? []) as Array<Record<string, any>>;
+
+  const cpuScaleMinBound =
+    numField(
+      activeCpuControl,
+      "scalingHwMinKhz",
+      "scaling_hw_min_khz",
+      "scalingMinKhz",
+      "scaling_min_khz",
+    ) || 800_000;
+  const cpuScaleMaxBound =
+    numField(
+      activeCpuControl,
+      "scalingHwMaxKhz",
+      "scaling_hw_max_khz",
+      "scalingMaxKhz",
+      "scaling_max_khz",
+    ) || 5_000_000;
+
+  const cpuGovernorOptions = useMemo(() => {
+    const arr = (activeCpuControl?.availableGovernors ?? activeCpuControl?.available_governors ?? []) as string[];
+    return arr.length > 0 ? arr : ["performance", "powersave"];
+  }, [activeCpuControl]);
+
+  const [cpuRange, setCpuRange] = useState<[number, number]>([cpuScaleMinBound, cpuScaleMaxBound]);
+  const [cpuGovernor, setCpuGovernor] = useState<string>(cpuGovernorOptions[0] ?? "performance");
+  const [uncoreRange, setUncoreRange] = useState<[number, number]>([1_200_000, 3_500_000]);
+  const [cpuPowerCap, setCpuPowerCap] = useState(120_000_000);
+
+  useEffect(() => {
+    setCpuRange((prev) => {
+      const lo = clamp(prev[0], cpuScaleMinBound, cpuScaleMaxBound);
+      const hi = clamp(prev[1], cpuScaleMinBound, cpuScaleMaxBound);
+      return [Math.min(lo, hi), Math.max(lo, hi)];
+    });
+  }, [cpuScaleMinBound, cpuScaleMaxBound]);
+
+  useEffect(() => {
+    if (!cpuGovernorOptions.includes(cpuGovernor)) {
+      setCpuGovernor(cpuGovernorOptions[0] ?? "performance");
+    }
+  }, [cpuGovernor, cpuGovernorOptions]);
+
+  const activeUncoreMetric = useMemo(
+    () => cpuUncoreNow.find((u) => numField(u, "packageId", "package_id") === packageId) ?? null,
+    [cpuUncoreNow, packageId],
+  );
+  const uncoreRuntimeMin = numField(activeUncoreMetric, "minKhz", "min_khz");
+  const uncoreRuntimeMax = numField(activeUncoreMetric, "maxKhz", "max_khz");
+  const uncoreInitialMin = numField(activeUncoreMetric, "initialMinKhz", "initial_min_khz");
+  const uncoreInitialMax = numField(activeUncoreMetric, "initialMaxKhz", "initial_max_khz");
+  const uncoreMin = uncoreInitialMin || numField(activeCpuControl, "uncoreMinKhz", "uncore_min_khz");
+  const uncoreMax = uncoreInitialMax || numField(activeCpuControl, "uncoreMaxKhz", "uncore_max_khz");
+  const cpuSupportsUncore = numField(cpuStatic, "supportsIntelUncore", "supports_intel_uncore") > 0;
+  const canControlUncore = uncoreMin > 0 && uncoreMax > uncoreMin;
+  const uncoreSyncPackageRef = useRef<number>(-1);
+  const uncoreSyncedRef = useRef(false);
+
+  useEffect(() => {
+    if (packageId < 0) return;
+    if (uncoreSyncPackageRef.current !== packageId) {
+      uncoreSyncPackageRef.current = packageId;
+      uncoreSyncedRef.current = false;
+    }
+  }, [packageId]);
+
+  useEffect(() => {
+    if (!canControlUncore || uncoreSyncedRef.current) return;
+    const runtimeMin = uncoreRuntimeMin > 0 ? uncoreRuntimeMin : uncoreMin;
+    const runtimeMax = uncoreRuntimeMax > 0 ? uncoreRuntimeMax : uncoreMax;
+    if (runtimeMax < runtimeMin || runtimeMin <= 0) return;
+    const lo = clamp(runtimeMin, uncoreMin, uncoreMax);
+    const hi = clamp(runtimeMax, uncoreMin, uncoreMax);
+    const next: [number, number] = [Math.min(lo, hi), Math.max(lo, hi)];
+    uncoreSyncedRef.current = true;
+    setUncoreRange(next);
+  }, [canControlUncore, uncoreRuntimeMin, uncoreRuntimeMax, uncoreMin, uncoreMax]);
+
+  useEffect(() => {
+    if (!canControlUncore) return;
+    setUncoreRange((prev) => {
+      const lo = clamp(prev[0], uncoreMin, uncoreMax);
+      const hi = clamp(prev[1], uncoreMin, uncoreMax);
+      return [Math.min(lo, hi), Math.max(lo, hi)];
+    });
+  }, [canControlUncore, uncoreMin, uncoreMax]);
+
+  const cpuPowerMin = numField(activeCpuControl, "powerCapMinMicroW", "power_cap_min_micro_w");
+  const cpuPowerMax = numField(activeCpuControl, "powerCapMaxMicroW", "power_cap_max_micro_w");
+  const cpuPowerCurrent = numField(activeCpuControl, "powerCapMicroW", "power_cap_micro_w");
+  const cpuPowerSliderMax = useMemo(() => {
+    if (cpuPowerMax > 0) return cpuPowerMax;
+    if (cpuPowerCurrent > 0) return cpuPowerCurrent;
+    if (cpuPowerCap > 0) return cpuPowerCap;
+    return 400_000_000;
+  }, [cpuPowerMax, cpuPowerCurrent, cpuPowerCap]);
+  const cpuPowerSliderMin = useMemo(() => {
+    if (cpuPowerMin > 0 && cpuPowerMin <= cpuPowerSliderMax) return cpuPowerMin;
+    return Math.min(1_000_000, cpuPowerSliderMax);
+  }, [cpuPowerMin, cpuPowerSliderMax]);
+
+  const cpuPowerSyncPackageRef = useRef<number>(-1);
+  const cpuPowerSyncedRef = useRef(false);
+
+  useEffect(() => {
+    if (packageId < 0) return;
+    if (cpuPowerSyncPackageRef.current !== packageId) {
+      cpuPowerSyncPackageRef.current = packageId;
+      cpuPowerSyncedRef.current = false;
+      setCpuPowerCap((prev) => clamp(prev || cpuPowerSliderMin, cpuPowerSliderMin, cpuPowerSliderMax));
+    }
+  }, [packageId, cpuPowerSliderMin, cpuPowerSliderMax]);
+
+  useEffect(() => {
+    if (packageId < 0 || cpuPowerSyncedRef.current) return;
+    if (cpuPowerCurrent <= 0) return;
+    cpuPowerSyncedRef.current = true;
+    setCpuPowerCap(clamp(cpuPowerCurrent, cpuPowerSliderMin, cpuPowerSliderMax));
+  }, [packageId, cpuPowerCurrent, cpuPowerSliderMin, cpuPowerSliderMax]);
+
+  useEffect(() => {
+    setCpuPowerCap((prev) => clamp(prev, cpuPowerSliderMin, cpuPowerSliderMax));
+  }, [cpuPowerSliderMin, cpuPowerSliderMax]);
+
+  const tempByPackage = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const t of cpuTemps) {
+      map.set(numField(t, "packageId", "package_id"), numField(t, "milliC", "milli_c") / 1000);
+    }
+    return map;
+  }, [cpuTemps]);
+
+  const dynamicPerCoreConfigByPackage = useMemo(() => {
+    const map = new Map<number, Record<string, any>>();
+    const perCore = (cpuUltraRaw?.perCore ?? []) as Array<Record<string, any>>;
+    for (const cfg of perCore) {
+      map.set(numField(cfg, "packageId", "package_id"), cfg);
+    }
+    return map;
+  }, [cpuUltraRaw]);
+
+  const staticControlByPackage = useMemo(() => {
+    const map = new Map<number, Record<string, any>>();
+    for (const cfg of cpuControls) {
+      map.set(numField(cfg, "packageId", "package_id"), cfg);
+    }
+    return map;
+  }, [cpuControls]);
+
+  const cpuCoreRows = useMemo<CpuCoreDenseRow[]>(() => {
+    return cpuCores
+      .filter((core) => numField(core, "packageId", "package_id") === packageId)
+      .map((core) => {
+        const pkg = numField(core, "packageId", "package_id");
+        const dyn = dynamicPerCoreConfigByPackage.get(pkg) ?? null;
+        const st = staticControlByPackage.get(pkg) ?? null;
+        return {
+          packageId: pkg,
+          coreId: numField(core, "coreId", "core_id"),
+          utilPct: numField(core, "utilization") * 100,
+          curKHz: numField(core, "scalingCurKhz", "scaling_cur_khz"),
+          minKHz:
+            numField(dyn, "scalingMinKhz", "scaling_min_khz") ||
+            numField(st, "scalingMinKhz", "scaling_min_khz"),
+          maxKHz:
+            numField(dyn, "scalingMaxKhz", "scaling_max_khz") ||
+            numField(st, "scalingMaxKhz", "scaling_max_khz"),
+          governor:
+            strField(dyn, "currentGovernor", "current_governor") ||
+            strField(st, "currentGovernor", "current_governor"),
+          driver:
+            strField(dyn, "scalingDriver", "scaling_driver") ||
+            strField(st, "scalingDriver", "scaling_driver"),
+          tempC: tempByPackage.get(pkg) ?? 0,
+        };
+      })
+      .sort((a, b) => (a.packageId === b.packageId ? a.coreId - b.coreId : a.packageId - b.packageId));
+  }, [cpuCores, dynamicPerCoreConfigByPackage, staticControlByPackage, tempByPackage, packageId]);
+
+  const cpuUsageSeries = useMemo(() => {
+    const list = historyByCategory.cpu_medium ?? [];
+    return list.map((item) => {
+      const payload = item.sample.cpuMediumMetrics ?? item.sample.cpu_medium_metrics ?? {};
+      const cores = (payload.cores ?? []) as Array<Record<string, any>>;
+      const perPkg = cores.filter((c) => numField(c, "packageId", "package_id") === packageId);
+      const utilAvg =
+        perPkg.length > 0
+          ? perPkg.reduce((acc, c) => acc + numField(c, "utilization") * 100, 0) / perPkg.length
+          : 0;
+      return { tsNs: item.atNs.toString(), time: nsToTimeLabel(item.atNs), utilPct: utilAvg };
+    });
+  }, [historyByCategory.cpu_medium, packageId]);
+
+  const cpuFreqSeries = useMemo(() => {
+    const list = historyByCategory.cpu_medium ?? [];
+    return list.map((item) => {
+      const payload = item.sample.cpuMediumMetrics ?? item.sample.cpu_medium_metrics ?? {};
+      const cores = (payload.cores ?? []) as Array<Record<string, any>>;
+      const perPkg = cores.filter((c) => numField(c, "packageId", "package_id") === packageId);
+      const avgMHz =
+        perPkg.length > 0
+          ? perPkg.reduce((acc, c) => acc + numField(c, "scalingCurKhz", "scaling_cur_khz"), 0) /
+            perPkg.length /
+            1000
+          : 0;
+      return { tsNs: item.atNs.toString(), time: nsToTimeLabel(item.atNs), avgMHz };
+    });
+  }, [historyByCategory.cpu_medium, packageId]);
+
+  const cpuTempSeries = useMemo(() => {
+    const list = historyByCategory.cpu_medium ?? [];
+    return list.map((item) => {
+      const payload = item.sample.cpuMediumMetrics ?? item.sample.cpu_medium_metrics ?? {};
+      const temps = (payload.temperatures ?? []) as Array<Record<string, any>>;
+      const temp = temps.find((t) => numField(t, "packageId", "package_id") === packageId) ?? null;
+      return {
+        tsNs: item.atNs.toString(),
+        time: nsToTimeLabel(item.atNs),
+        tempC: numField(temp, "milliC", "milli_c") / 1000,
+      };
+    });
+  }, [historyByCategory.cpu_medium, packageId]);
+
+  const cpuPowerSeries = useMemo(() => {
+    const list = historyByCategory.cpu_ultra_fast ?? [];
+    const rows: Array<Record<string, number | string>> = [];
+    for (let i = 1; i < list.length; i += 1) {
+      const prev = list[i - 1];
+      const cur = list[i];
+      const prevRapl =
+        ((prev.sample.cpuUltraMetrics ?? prev.sample.cpu_ultra_metrics ?? {}).rapl ?? []) as Array<
+          Record<string, any>
+        >;
+      const curRapl =
+        ((cur.sample.cpuUltraMetrics ?? cur.sample.cpu_ultra_metrics ?? {}).rapl ?? []) as Array<
+          Record<string, any>
+        >;
+
+      const prevByPkg = new Map<number, Record<string, any>>();
+      for (const p of prevRapl) {
+        prevByPkg.set(numField(p, "packageId", "package_id"), p);
+      }
+
+      const curPkg = curRapl.find((c) => numField(c, "packageId", "package_id") === packageId);
+      const prevPkg = curPkg ? prevByPkg.get(packageId) : null;
+      let powerW = 0;
+      if (curPkg && prevPkg) {
+        const curEnergy = numField(curPkg, "energyMicroJ", "energy_micro_j");
+        const prevEnergy = numField(prevPkg, "energyMicroJ", "energy_micro_j");
+        const curTs = sampledAtNs(curPkg, cur.atNs);
+        const prevTs = sampledAtNs(prevPkg, prev.atNs);
+        const rate = deltaRate(curEnergy, prevEnergy, curTs, prevTs);
+        if (rate !== null) powerW = rate / 1_000_000;
+      }
+
+      rows.push({ tsNs: cur.atNs.toString(), time: nsToTimeLabel(cur.atNs), powerW });
+    }
+    return rows;
+  }, [historyByCategory.cpu_ultra_fast, packageId]);
+
+  const cpuUncoreSeries = useMemo(() => {
+    const list = historyByCategory.cpu_ultra_fast ?? [];
+    return list.map((item) => {
+      const payload = item.sample.cpuUltraMetrics ?? item.sample.cpu_ultra_metrics ?? {};
+      const uncore = (payload.uncore ?? []) as Array<Record<string, any>>;
+      const pkg = uncore.find((u) => numField(u, "packageId", "package_id") === packageId) ?? null;
+      const currentMHz = numField(pkg, "currentKhz", "current_khz") / 1000;
+      return { tsNs: item.atNs.toString(), time: nsToTimeLabel(item.atNs), currentMHz };
+    });
+  }, [historyByCategory.cpu_ultra_fast, packageId]);
+
+  const hasUncoreSample = useMemo(
+    () => cpuUncoreSeries.some((row) => numField(row, "currentMHz") > 0),
+    [cpuUncoreSeries],
+  );
+  const showUncore = cpuSupportsUncore || canControlUncore || hasUncoreSample;
+
+  const cpuPowerMaxBound = useMemo(() => {
+    const capW = numField(activeCpuControl, "powerCapMaxMicroW", "power_cap_max_micro_w") / 1_000_000;
+    if (capW > 0) return capW;
+    const sampleMax = cpuPowerSeries.reduce((acc, row) => Math.max(acc, numField(row, "powerW")), 0);
+    return Math.max(sampleMax, 1);
+  }, [activeCpuControl, cpuPowerSeries]);
+
+  const cpuUncoreMaxBound = useMemo(() => {
+    const boundMHz = uncoreMax > 0 ? uncoreMax / 1000 : 0;
+    const sampleMax = cpuUncoreSeries.reduce((acc, row) => Math.max(acc, numField(row, "currentMHz")), 0);
+    return Math.max(boundMHz, sampleMax, 1);
+  }, [uncoreMax, cpuUncoreSeries]);
+
+  const cpuTempMaxBound = useMemo(() => {
+    const sampleMax = cpuTempSeries.reduce((acc, row) => Math.max(acc, numField(row, "tempC")), 0);
+    return Math.max(100, sampleMax * 1.1);
+  }, [cpuTempSeries]);
+
+  const activeCpuRapl = useMemo(
+    () => cpuRapl.find((r) => numField(r, "packageId", "package_id") === packageId) ?? null,
+    [cpuRapl, packageId],
+  );
+
+  const coreIDsLabel = formatIDRanges((activeCpuDevice?.coreIds ?? activeCpuDevice?.core_ids ?? []) as number[]);
+  const cpuChartSuffix = `${nodeId || "node"}-pkg${packageId}`;
+
+  if (packageId < 0) {
+    return (
+      <Section title="CPU Device" icon={<Cpu className="h-4 w-4" />}>
+        <div className="text-sm text-slate-500">No CPU package discovered.</div>
+      </Section>
+    );
+  }
+
+  return (
+    <>
+      <Section title={`CPU ${packageId} Static`} icon={<Cpu className="h-4 w-4" />}>
+        <div className="grid gap-2 md:grid-cols-2">
+          <StatRow name="Vendor" value={strField(activeCpuDevice, "vendor") || strField(cpuStatic, "vendor") || "-"} />
+          <StatRow name="Model" value={strField(activeCpuDevice, "model") || strField(cpuStatic, "model") || "-"} />
+          <StatRow name="Core Count" value={numField(activeCpuDevice, "coreCount", "core_count")} />
+          <StatRow name="Thread Count" value={numField(activeCpuDevice, "threadCount", "thread_count")} />
+          <StatRow name="Threads/Core" value={numField(cpuStatic, "threadsPerCore", "threads_per_core")} />
+          <StatRow
+            name="Scale HW Min"
+            value={formatKHz(numField(activeCpuControl, "scalingHwMinKhz", "scaling_hw_min_khz"))}
+          />
+          <StatRow
+            name="Scale HW Max"
+            value={formatKHz(numField(activeCpuControl, "scalingHwMaxKhz", "scaling_hw_max_khz"))}
+          />
+          <StatRow name="Core IDs" value={coreIDsLabel} />
+        </div>
+      </Section>
+
+      <Section title={`CPU ${packageId} Controls`} icon={<Thermometer className="h-4 w-4" />}>
+        <div className="grid gap-3 lg:grid-cols-2">
+          <div className="space-y-3 border border-slate-200 p-3">
+            <div className="text-sm font-medium">Scaling and Governor</div>
+            <div>
+              <div className="mb-1 text-xs text-slate-500">
+                Scaling Range {formatKHz(cpuRange[0])} ~ {formatKHz(cpuRange[1])}
+              </div>
+              <Slider
+                min={cpuScaleMinBound}
+                max={cpuScaleMaxBound}
+                step={1000}
+                value={cpuRange}
+                onValueChange={(v) => setCpuRange([v[0] ?? cpuRange[0], v[1] ?? cpuRange[1]])}
+              />
+            </div>
+
+            <div>
+              <div className="mb-1 text-xs text-slate-500">Governor</div>
+              <Select value={cpuGovernor} onValueChange={setCpuGovernor}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {cpuGovernorOptions.map((g) => (
+                    <SelectItem key={g} value={g}>
+                      {g}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex gap-2">
+              <Button
+                disabled={cmdPending}
+                onClick={() =>
+                  sendCommand("cpu_scaling_range", {
+                    packageId,
+                    minKhz: Math.round(cpuRange[0]),
+                    maxKhz: Math.round(cpuRange[1]),
+                  })
+                }
+              >
+                Apply Frequency
+              </Button>
+              <Button
+                variant="outline"
+                disabled={cmdPending}
+                onClick={() =>
+                  sendCommand("cpu_governor", {
+                    packageId,
+                    governor: cpuGovernor,
+                  })
+                }
+              >
+                Apply Governor
+              </Button>
+            </div>
+          </div>
+
+          <div className="space-y-3 border border-slate-200 p-3">
+            <div className="text-sm font-medium">{showUncore ? "Uncore and RAPL" : "RAPL"}</div>
+            {showUncore ? (
+              <div>
+                <div className="mb-1 text-xs text-slate-500">
+                  Uncore Range {formatKHz(uncoreRange[0])} ~ {formatKHz(uncoreRange[1])}
+                </div>
+                <Slider
+                  min={maxOr(uncoreMin, 1)}
+                  max={maxOr(uncoreMax, 1)}
+                  step={1000}
+                  value={uncoreRange}
+                  onValueChange={(v) => setUncoreRange([v[0] ?? uncoreRange[0], v[1] ?? uncoreRange[1]])}
+                  disabled={!canControlUncore}
+                />
+              </div>
+            ) : null}
+
+            <div>
+              <div className="mb-1 text-xs text-slate-500">Power Cap {formatPowerMicroW(cpuPowerCap)}</div>
+              <Slider
+                min={cpuPowerSliderMin}
+                max={cpuPowerSliderMax}
+                step={1000}
+                value={[cpuPowerCap]}
+                onValueChange={(v) => setCpuPowerCap(v[0] ?? cpuPowerCap)}
+              />
+            </div>
+
+            <div className="flex gap-2">
+              {showUncore ? (
+                <Button
+                  variant="outline"
+                  disabled={cmdPending || !canControlUncore}
+                  onClick={() =>
+                    sendCommand("cpu_uncore_range", {
+                      packageId,
+                      minKhz: Math.round(uncoreRange[0]),
+                      maxKhz: Math.round(uncoreRange[1]),
+                    })
+                  }
+                >
+                  Apply Uncore
+                </Button>
+              ) : null}
+              <Button
+                variant="outline"
+                disabled={cmdPending || packageId < 0}
+                onClick={() =>
+                  sendCommand("cpu_power_cap", {
+                    packageId,
+                    microwatt: Math.round(clamp(cpuPowerCap, cpuPowerSliderMin, cpuPowerSliderMax)),
+                  })
+                }
+              >
+                Apply Power Cap
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        {cmdMsg ? <div className="mt-2 text-xs text-slate-600">{cmdMsg}</div> : null}
+      </Section>
+
+      <Section title={`CPU ${packageId} Per-Core Runtime`} icon={<Cpu className="h-4 w-4" />}>
+        <CpuCoreDenseTable rows={cpuCoreRows} />
+      </Section>
+
+      <div className="grid gap-3 lg:grid-cols-2">
+        <MetricChart
+          chartId={`cpu-utilization-${cpuChartSuffix}`}
+          title={`CPU ${packageId} Utilization`}
+          yLabel="%"
+          data={cpuUsageSeries}
+          lines={[{ key: "utilPct", label: "Utilization", color: "#0f766e" }]}
+          yDomain={[0, 100]}
+        />
+        <MetricChart
+          chartId={`cpu-frequency-${cpuChartSuffix}`}
+          title={`CPU ${packageId} Frequency`}
+          yLabel="MHz"
+          data={cpuFreqSeries}
+          lines={[{ key: "avgMHz", label: "Average", color: "#0369a1" }]}
+          yDomain={[0, cpuScaleMaxBound / 1000]}
+        />
+        {showUncore ? (
+          <MetricChart
+            chartId={`cpu-uncore-frequency-${cpuChartSuffix}`}
+            title={`CPU ${packageId} Uncore Frequency`}
+            yLabel="MHz"
+            data={cpuUncoreSeries}
+            lines={[{ key: "currentMHz", label: "Uncore", color: "#15803d" }]}
+            yDomain={[0, cpuUncoreMaxBound]}
+          />
+        ) : null}
+        <MetricChart
+          chartId={`cpu-temperature-${cpuChartSuffix}`}
+          title={`CPU ${packageId} Temperature`}
+          yLabel="C"
+          data={cpuTempSeries}
+          lines={[{ key: "tempC", label: "Temperature", color: "#dc2626" }]}
+          yDomain={[0, cpuTempMaxBound]}
+        />
+        <MetricChart
+          chartId={`cpu-package-power-${cpuChartSuffix}`}
+          title={`CPU ${packageId} Package Power`}
+          yLabel="W"
+          data={cpuPowerSeries}
+          lines={[{ key: "powerW", label: "Power", color: "#7c3aed" }]}
+          yDomain={[0, cpuPowerMaxBound]}
+        />
+      </div>
+
+      <Section title={`CPU ${packageId} RAPL`} icon={<Thermometer className="h-4 w-4" />}>
+        <div className="grid gap-2 md:grid-cols-2">
+          <StatRow
+            name="Energy"
+            value={`${formatNumber(numField(activeCpuRapl, "energyMicroJ", "energy_micro_j") / 1_000_000)} J`}
+          />
+          <StatRow
+            name="Current Cap"
+            value={formatPowerMicroW(numField(activeCpuRapl, "powerCapMicroW", "power_cap_micro_w"))}
+          />
+          <StatRow
+            name="Cap Range"
+            value={
+              numField(activeCpuControl, "powerCapMinMicroW", "power_cap_min_micro_w") > 0 ||
+              numField(activeCpuControl, "powerCapMaxMicroW", "power_cap_max_micro_w") > 0
+                ? `${formatPowerMicroW(numField(activeCpuControl, "powerCapMinMicroW", "power_cap_min_micro_w"))} ~ ${formatPowerMicroW(numField(activeCpuControl, "powerCapMaxMicroW", "power_cap_max_micro_w"))}`
+                : "-"
+            }
+          />
+          {showUncore ? (
+            <StatRow
+              name="Uncore Range"
+              value={canControlUncore ? `${formatKHz(uncoreMin)} ~ ${formatKHz(uncoreMax)}` : "unsupported"}
+            />
+          ) : null}
+        </div>
+      </Section>
+    </>
+  );
+}
