@@ -94,6 +94,7 @@ type NodeSnapshot struct {
 	NodeID       string
 	Connected    bool
 	LastSeen     int64
+	SourceIP     string
 	Registration *Registration
 	Latest       map[string]TimedSample
 }

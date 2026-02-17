@@ -15,6 +15,7 @@ import (
 	"github.com/rs/zerolog"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/peer"
 
 	"telemetry/api"
 	pb "telemetry/api/pb"
@@ -162,9 +163,11 @@ func (s *Server) StreamTelemetry(stream pb.TelemetryService_StreamTelemetryServe
 	if nodeID == "" {
 		return fmt.Errorf("registration node_id is empty")
 	}
+	sourceIP := peerIPFromContext(stream.Context())
 
 	session := &nodeSession{nodeID: nodeID, cmdQ: make(chan *api.Command, s.cfg.PerNodeQueueSize)}
 	s.store.SetNodeRegistration(reg)
+	s.store.SetNodeSourceIP(nodeID, sourceIP)
 	s.registerSession(session)
 	if snapshot, err := s.store.GetNodeSnapshot(nodeID); err == nil {
 		s.wsHub.PublishNodeSnapshot(toPBNodeSnapshot(snapshot))
@@ -178,7 +181,7 @@ func (s *Server) StreamTelemetry(stream pb.TelemetryService_StreamTelemetryServe
 		return err
 	}
 
-	s.log.Info().Str("node_id", nodeID).Msg("node connected")
+	s.log.Info().Str("node_id", nodeID).Str("source_ip", sourceIP).Msg("node connected")
 
 	ctx, cancel := context.WithCancel(stream.Context())
 	defer cancel()
@@ -225,6 +228,19 @@ func (s *Server) StreamTelemetry(stream pb.TelemetryService_StreamTelemetryServe
 		s.log.Info().Str("node_id", nodeID).Msg("node disconnected")
 	}
 	return err
+}
+
+func peerIPFromContext(ctx context.Context) string {
+	p, ok := peer.FromContext(ctx)
+	if !ok || p == nil || p.Addr == nil {
+		return ""
+	}
+	addr := p.Addr.String()
+	host, _, err := net.SplitHostPort(addr)
+	if err == nil && host != "" {
+		return host
+	}
+	return addr
 }
 
 func (s *Server) handleAgentMessage(nodeID string, msg *api.AgentMessage) {

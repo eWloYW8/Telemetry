@@ -248,6 +248,29 @@ export function GPUModuleView({
 
   return (
     <>
+      <Section title={`GPU ${gpuIndex} Static`} icon={<Gauge className="h-4 w-4" />}>
+        <div className="grid gap-2 md:grid-cols-2">
+          <StatRow name="Name" value={strField(activeGPUStatic, "name") || "-"} />
+          <StatRow name="UUID" value={strField(activeGPUStatic, "uuid") || "-"} />
+          <StatRow
+            name="Memory Total"
+            value={formatBytes(numField(activeGPUStatic, "memoryTotalBytes", "memory_total_bytes"))}
+          />
+          <StatRow
+            name="Power Range"
+            value={`${formatPowerMilliW(numField(activeGPUStatic, "powerMinMilliwatt", "power_min_milliwatt"))} ~ ${formatPowerMilliW(numField(activeGPUStatic, "powerMaxMilliwatt", "power_max_milliwatt"))}`}
+          />
+          <StatRow
+            name="SM Range"
+            value={`${numField(activeGPUStatic, "smClockMinMhz", "sm_clock_min_mhz")} ~ ${numField(activeGPUStatic, "smClockMaxMhz", "sm_clock_max_mhz")} MHz`}
+          />
+          <StatRow
+            name="MEM Range"
+            value={`${numField(activeGPUStatic, "memClockMinMhz", "mem_clock_min_mhz")} ~ ${numField(activeGPUStatic, "memClockMaxMhz", "mem_clock_max_mhz")} MHz`}
+          />
+        </div>
+      </Section>
+
       <Section title={`GPU ${gpuIndex} Controls`} icon={<Gauge className="h-4 w-4" />}>
         <div className="grid gap-3 lg:grid-cols-2">
           <div className="space-y-3 border border-slate-200 p-3">
@@ -355,29 +378,6 @@ export function GPUModuleView({
         </div>
 
         {cmdMsg ? <div className="mt-2 text-xs text-slate-600">{cmdMsg}</div> : null}
-      </Section>
-
-      <Section title={`GPU ${gpuIndex} Static`} icon={<Gauge className="h-4 w-4" />}>
-        <div className="grid gap-2 md:grid-cols-2">
-          <StatRow name="Name" value={strField(activeGPUStatic, "name") || "-"} />
-          <StatRow name="UUID" value={strField(activeGPUStatic, "uuid") || "-"} />
-          <StatRow
-            name="Memory Total"
-            value={formatBytes(numField(activeGPUStatic, "memoryTotalBytes", "memory_total_bytes"))}
-          />
-          <StatRow
-            name="Power Range"
-            value={`${formatPowerMilliW(numField(activeGPUStatic, "powerMinMilliwatt", "power_min_milliwatt"))} ~ ${formatPowerMilliW(numField(activeGPUStatic, "powerMaxMilliwatt", "power_max_milliwatt"))}`}
-          />
-          <StatRow
-            name="SM Range"
-            value={`${numField(activeGPUStatic, "smClockMinMhz", "sm_clock_min_mhz")} ~ ${numField(activeGPUStatic, "smClockMaxMhz", "sm_clock_max_mhz")} MHz`}
-          />
-          <StatRow
-            name="MEM Range"
-            value={`${numField(activeGPUStatic, "memClockMinMhz", "mem_clock_min_mhz")} ~ ${numField(activeGPUStatic, "memClockMaxMhz", "mem_clock_max_mhz")} MHz`}
-          />
-        </div>
       </Section>
 
       <div className="grid gap-3 lg:grid-cols-2">

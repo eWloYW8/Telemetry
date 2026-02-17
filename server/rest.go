@@ -314,6 +314,7 @@ func toPBNodeSnapshot(snapshot api.NodeSnapshot) *pb.NodeSnapshot {
 		NodeId:           snapshot.NodeID,
 		Connected:        snapshot.Connected,
 		LastSeenUnixNano: snapshot.LastSeen,
+		SourceIp:         snapshot.SourceIP,
 		Registration:     api.ToPBRegistration(snapshot.Registration),
 	}
 }

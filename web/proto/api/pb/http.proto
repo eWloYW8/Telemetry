@@ -12,6 +12,7 @@ message NodeSnapshot {
   int64 last_seen_unix_nano = 3;
   Registration registration = 4;
   repeated MetricSample latest = 5;
+  string source_ip = 6;
 }
 
 message ListNodesResponse {

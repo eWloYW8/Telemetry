@@ -1,6 +1,7 @@
 "use client";
 
 import { ArrowDown, ArrowUp } from "lucide-react";
+import type { MouseEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 
@@ -12,6 +13,8 @@ type ProcessTableProps = {
   sortKey: ProcessSortKey;
   sortDir: SortDir;
   onSort: (k: ProcessSortKey) => void;
+  pinnedPids: Set<number>;
+  onTogglePin: (pid: number) => void;
   commandPending: boolean;
   onSignal: (pid: number, signal: number) => void;
 };
@@ -26,6 +29,8 @@ export function ProcessTable({
   sortKey,
   sortDir,
   onSort,
+  pinnedPids,
+  onTogglePin,
   commandPending,
   onSignal,
 }: ProcessTableProps) {
@@ -56,6 +61,11 @@ export function ProcessTable({
     if (bytes >= 2 * 1024 * 1024 * 1024) return "text-orange-600";
     if (bytes >= 512 * 1024 * 1024) return "text-amber-600";
     return "text-slate-700";
+  };
+  const onRowClick = (evt: MouseEvent<HTMLTableRowElement>, pid: number) => {
+    const target = evt.target as HTMLElement | null;
+    if (target?.closest("button")) return;
+    onTogglePin(pid);
   };
 
   return (
@@ -88,7 +98,12 @@ export function ProcessTable({
         </thead>
         <tbody className="divide-y divide-slate-100 bg-white">
           {rows.map((p) => (
-            <tr key={`proc-${p.pid}`} className="hover:bg-slate-50">
+            <tr
+              key={`proc-${p.pid}`}
+              className={`hover:bg-slate-50 ${pinnedPids.has(p.pid) ? "bg-amber-50/70" : ""}`}
+              onClick={(evt) => onRowClick(evt, p.pid)}
+              title={pinnedPids.has(p.pid) ? "Click row to unpin" : "Click row to pin on top"}
+            >
               <td className="px-3 py-0.5 whitespace-nowrap font-mono">{p.pid}</td>
               <td className="px-3 py-0.5 whitespace-nowrap font-mono text-slate-500">{p.ppid}</td>
               <td className="px-3 py-0.5 whitespace-nowrap font-medium">{p.user}</td>

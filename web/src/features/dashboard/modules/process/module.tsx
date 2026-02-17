@@ -19,6 +19,7 @@ type ProcessModuleViewProps = {
 export function ProcessModuleView({ latestRaw, historyByCategory, cmdPending, cmdMsg, sendCommand }: ProcessModuleViewProps) {
   const [procSortKey, setProcSortKey] = useState<ProcessSortKey>("pid");
   const [procSortDir, setProcSortDir] = useState<SortDir>("asc");
+  const [pinnedPids, setPinnedPids] = useState<Set<number>>(new Set());
 
   const processRaw = latestRaw.process?.processMetrics ?? latestRaw.process?.process_metrics ?? null;
   const processRowsRaw = (processRaw?.processes ?? []) as Array<Record<string, any>>;
@@ -35,6 +36,10 @@ export function ProcessModuleView({ latestRaw, historyByCategory, cmdPending, cm
     }));
 
     return rows.sort((a, b) => {
+      const aPinned = pinnedPids.has(a.pid);
+      const bPinned = pinnedPids.has(b.pid);
+      if (aPinned !== bPinned) return aPinned ? -1 : 1;
+
       const sign = procSortDir === "asc" ? 1 : -1;
       switch (procSortKey) {
         case "pid":
@@ -55,7 +60,7 @@ export function ProcessModuleView({ latestRaw, historyByCategory, cmdPending, cm
           return 0;
       }
     });
-  }, [processRowsRaw, procSortDir, procSortKey, historyByCategory.process]);
+  }, [processRowsRaw, procSortDir, procSortKey, pinnedPids, historyByCategory.process]);
 
   const onSortProcess = (key: ProcessSortKey) => {
     if (procSortKey === key) {
@@ -64,6 +69,15 @@ export function ProcessModuleView({ latestRaw, historyByCategory, cmdPending, cm
     }
     setProcSortKey(key);
     setProcSortDir(key === "command" || key === "user" || key === "state" ? "asc" : "desc");
+  };
+
+  const onTogglePin = (pid: number) => {
+    setPinnedPids((prev) => {
+      const next = new Set(prev);
+      if (next.has(pid)) next.delete(pid);
+      else next.add(pid);
+      return next;
+    });
   };
 
   return (
@@ -77,6 +91,8 @@ export function ProcessModuleView({ latestRaw, historyByCategory, cmdPending, cm
         sortKey={procSortKey}
         sortDir={procSortDir}
         onSort={onSortProcess}
+        pinnedPids={pinnedPids}
+        onTogglePin={onTogglePin}
         commandPending={cmdPending}
         onSignal={(pid, signal) => sendCommand("process_signal", { pid, signal })}
       />

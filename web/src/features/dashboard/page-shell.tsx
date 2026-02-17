@@ -1,9 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Activity, Cpu, Gauge, HardDrive, MemoryStick, Network, Server } from "lucide-react";
+import { Activity, Cpu, Gauge, HardDrive, MemoryStick, Network } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import { NodeSidebar } from "./components/node/node-sidebar";
@@ -12,13 +11,10 @@ import { GPUModuleView, gpuIndexesFromRegistration } from "./modules/gpu/module"
 import { MemoryModuleView } from "./modules/memory/module";
 import { NetworkModuleView } from "./modules/network/module";
 import { ProcessModuleView } from "./modules/process/module";
-import { strField } from "./modules/shared/data";
-import { Section, StatRow } from "./modules/shared/section";
 import { StorageModuleView } from "./modules/storage/module";
 import { postProtoCommand } from "./state/commands";
 import { useTelemetryWS } from "./state/ws-client";
 import type { TabKey } from "./types";
-import { nsToTimeLabel } from "./utils/time";
 
 export function DashboardShell() {
   const { wsConnected, nodes, history } = useTelemetryWS();
@@ -45,7 +41,6 @@ export function DashboardShell() {
   );
 
   const registration = (selectedNode?.registration ?? null) as Record<string, any> | null;
-  const basic = (registration?.basic ?? null) as Record<string, any> | null;
 
   const latestRaw = selectedNode?.latestRaw ?? {};
   const historyByCategory = history[selectedNodeId] ?? {};
@@ -108,38 +103,6 @@ export function DashboardShell() {
           </div>
         ) : (
           <div className="space-y-3">
-            <Section
-              title={`Node ${selectedNode.nodeId}`}
-              icon={<Server className="h-4 w-4" />}
-              right={
-                <div className="flex items-center gap-2">
-                  <Badge variant={selectedNode.connected ? "default" : "outline"}>
-                    {selectedNode.connected ? "connected" : "stale"}
-                  </Badge>
-                  <Badge variant="secondary">/api</Badge>
-                </div>
-              }
-            >
-              <div className="grid gap-3 md:grid-cols-2">
-                <div>
-                  <StatRow name="Hostname" value={strField(basic, "hostname") || "-"} />
-                  <StatRow name="IP" value={((basic?.ips ?? []) as string[]).join(", ") || "-"} />
-                  <StatRow
-                    name="OS / Kernel"
-                    value={`${strField(basic, "os") || "-"} / ${strField(basic, "kernel") || "-"}`}
-                  />
-                </div>
-                <div>
-                  <StatRow name="Arch" value={strField(basic, "arch") || "-"} />
-                  <StatRow
-                    name="Hardware"
-                    value={`${strField(basic, "hardwareVendor", "hardware_vendor") || "-"} ${strField(basic, "hardwareModel", "hardware_model") || ""}`.trim()}
-                  />
-                  <StatRow name="Last Seen" value={nsToTimeLabel(selectedNode.lastSeenUnixNano)} />
-                </div>
-              </div>
-            </Section>
-
             <Tabs value={activeTab} onValueChange={onChangeTopTab}>
               <TabsList className="flex w-full flex-wrap gap-1 bg-white p-1">
                 {cpuPackageIds.map((pkg) => (

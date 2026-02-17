@@ -12,6 +12,7 @@ export type NodeRuntime = {
   nodeId: string;
   connected: boolean;
   lastSeenUnixNano: bigint;
+  sourceIP?: string;
   registration?: Record<string, any> | null;
   latestRaw: Record<string, Record<string, any>>;
 };

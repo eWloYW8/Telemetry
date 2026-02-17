@@ -90,6 +90,7 @@ export function useTelemetryWS() {
                 nodeId,
                 connected: Boolean(nodeMsg.connected),
                 lastSeenUnixNano: toBigIntNs(nodeMsg.lastSeenUnixNano),
+                sourceIP: String(nodeMsg.sourceIp ?? current?.sourceIP ?? ""),
                 registration: (nodeMsg.registration ?? current?.registration ?? null) as
                   | Record<string, any>
                   | null,
@@ -127,6 +128,7 @@ export function useTelemetryWS() {
               nodeId,
               connected: true,
               lastSeenUnixNano: atNs,
+              sourceIP: current?.sourceIP ?? "",
               registration: current?.registration ?? null,
               latestRaw: {
                 ...(current?.latestRaw ?? {}),

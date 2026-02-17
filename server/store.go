@@ -13,6 +13,7 @@ type nodeBuffer struct {
 	registration *api.Registration
 	connected    bool
 	lastSeen     int64
+	sourceIP     string
 }
 
 type Store struct {
@@ -56,6 +57,13 @@ func (s *Store) SetNodeConnected(nodeID string, connected bool) {
 	n.connected = connected
 }
 
+func (s *Store) SetNodeSourceIP(nodeID, sourceIP string) {
+	n := s.ensureNode(nodeID)
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.sourceIP = sourceIP
+}
+
 func (s *Store) TouchNode(nodeID string, at int64) {
 	n := s.ensureNode(nodeID)
 	n.mu.Lock()
@@ -80,6 +88,7 @@ func (s *Store) ListNodeSnapshots() []api.NodeSnapshot {
 			NodeID:    id,
 			Connected: n.connected,
 			LastSeen:  n.lastSeen,
+			SourceIP:  n.sourceIP,
 		}
 		if n.registration != nil {
 			cp := *n.registration
@@ -104,6 +113,7 @@ func (s *Store) GetNodeSnapshot(nodeID string) (api.NodeSnapshot, error) {
 		NodeID:    nodeID,
 		Connected: n.connected,
 		LastSeen:  n.lastSeen,
+		SourceIP:  n.sourceIP,
 	}
 	if n.registration != nil {
 		cp := *n.registration
