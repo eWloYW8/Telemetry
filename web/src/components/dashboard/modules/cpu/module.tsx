@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Cpu, Thermometer } from "lucide-react";
+import { ChevronDown, Cpu, Thermometer } from "lucide-react";
 
 import {
   Select,
@@ -106,6 +106,7 @@ export function CPUModuleView({
   const [cpuGovernor, setCpuGovernor] = useState<string>(cpuGovernorOptions[0] ?? "performance");
   const [uncoreRange, setUncoreRange] = useState<[number, number]>([1_200_000, 3_500_000]);
   const [cpuPowerCap, setCpuPowerCap] = useState(120_000_000);
+  const [showPerCoreRuntime, setShowPerCoreRuntime] = useState(false);
 
   const [isEditingScale, setIsEditingScale] = useState(false);
   const [isEditingUncore, setIsEditingUncore] = useState(false);
@@ -640,8 +641,29 @@ export function CPUModuleView({
         {cmdMsg ? <div className="mt-2 text-xs text-[var(--telemetry-muted-fg)]">{cmdMsg}</div> : null}
       </Section>
 
-      <Section title={`CPU ${packageId} Per-Core Runtime`} icon={<Cpu className="h-4 w-4" />}>
-        <CpuCoreDenseTable rows={cpuCoreRows} />
+      <Section
+        title={`CPU ${packageId} Per-Core Runtime`}
+        icon={<Cpu className="h-4 w-4" />}
+        right={
+          <button
+            type="button"
+            className="inline-flex h-7 items-center gap-1 rounded-md border border-[var(--telemetry-border)] bg-[var(--telemetry-surface-soft)] px-2 text-xs font-medium text-[var(--telemetry-text)] transition-colors hover:bg-[var(--telemetry-surface)]"
+            onClick={() => setShowPerCoreRuntime((prev) => !prev)}
+            aria-expanded={showPerCoreRuntime}
+            aria-controls={`cpu-per-core-runtime-${cpuChartSuffix}`}
+          >
+            <span>{showPerCoreRuntime ? "Collapse" : "Expand"}</span>
+            <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showPerCoreRuntime ? "rotate-180" : ""}`} />
+          </button>
+        }
+      >
+        <div id={`cpu-per-core-runtime-${cpuChartSuffix}`}>
+          {showPerCoreRuntime ? (
+            <CpuCoreDenseTable rows={cpuCoreRows} />
+          ) : (
+            <div className="text-xs text-[var(--telemetry-muted-fg)]">Per-core runtime table is collapsed.</div>
+          )}
+        </div>
       </Section>
 
       <div className="grid gap-3 lg:grid-cols-2">
