@@ -413,6 +413,49 @@ export function CPUModuleView({
     });
   }, [historyByCategory.cpu_ultra_fast, packageId]);
 
+  const cpuFrequencySeries = useMemo(() => {
+    if (cpuFreqSeries.length === 0) return [];
+    if (cpuUncoreSeries.length === 0) return cpuFreqSeries;
+
+    const uncorePoints = cpuUncoreSeries
+      .map((row) => {
+        try {
+          return {
+            tsNs: BigInt(String(row.tsNs ?? "0")),
+            mhz: numField(row, "currentMHz"),
+          };
+        } catch {
+          return { tsNs: 0n, mhz: 0 };
+        }
+      })
+      .filter((row) => row.tsNs > 0n && row.mhz > 0)
+      .sort((a, b) => (a.tsNs === b.tsNs ? 0 : a.tsNs < b.tsNs ? -1 : 1));
+
+    if (uncorePoints.length === 0) return cpuFreqSeries;
+
+    let idx = 0;
+    let lastUncoreMHz = uncorePoints[0]?.mhz ?? 0;
+
+    return cpuFreqSeries.map((row) => {
+      let tsNs = 0n;
+      try {
+        tsNs = BigInt(String(row.tsNs ?? "0"));
+      } catch {
+        tsNs = 0n;
+      }
+
+      while (idx < uncorePoints.length && uncorePoints[idx].tsNs <= tsNs) {
+        lastUncoreMHz = uncorePoints[idx].mhz;
+        idx += 1;
+      }
+
+      return {
+        ...row,
+        uncoreMHz: lastUncoreMHz,
+      };
+    });
+  }, [cpuFreqSeries, cpuUncoreSeries]);
+
   const hasUncoreSample = useMemo(
     () => cpuUncoreSeries.some((row) => numField(row, "currentMHz") > 0),
     [cpuUncoreSeries],
@@ -614,20 +657,13 @@ export function CPUModuleView({
           chartId={`cpu-frequency-${cpuChartSuffix}`}
           title={`CPU ${packageId} Frequency`}
           yLabel="MHz"
-          data={cpuFreqSeries}
-          lines={[{ key: "avgMHz", label: "Average", color: "#0369a1" }]}
-          yDomain={[0, cpuScaleMaxBound / 1000]}
+          data={cpuFrequencySeries}
+          lines={[
+            { key: "avgMHz", label: "Core", color: "#0369a1" },
+            ...(showUncore ? [{ key: "uncoreMHz", label: "Uncore", color: "#15803d" }] : []),
+          ]}
+          yDomain={[0, showUncore ? Math.max(cpuScaleMaxBound / 1000, cpuUncoreMaxBound) : cpuScaleMaxBound / 1000]}
         />
-        {showUncore ? (
-          <MetricChart
-            chartId={`cpu-uncore-frequency-${cpuChartSuffix}`}
-            title={`CPU ${packageId} Uncore Frequency`}
-            yLabel="MHz"
-            data={cpuUncoreSeries}
-            lines={[{ key: "currentMHz", label: "Uncore", color: "#15803d" }]}
-            yDomain={[0, cpuUncoreMaxBound]}
-          />
-        ) : null}
         <MetricChart
           chartId={`cpu-temperature-${cpuChartSuffix}`}
           title={`CPU ${packageId} Temperature`}
