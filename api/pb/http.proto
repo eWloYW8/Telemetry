@@ -52,6 +52,12 @@ message WSClientControl {
   string op = 1;
   repeated string nodes = 2;
   repeated string categories = 3;
+  WSCommandRequest command = 4;
+}
+
+message WSCommandRequest {
+  string node_id = 1;
+  Command command = 2;
 }
 
 message WSOutgoingMessage {
@@ -60,4 +66,5 @@ message WSOutgoingMessage {
   WSWelcome welcome = 3;
   string error = 4;
   NodeSnapshot node = 5;
+  CommandResult command_result = 6;
 }

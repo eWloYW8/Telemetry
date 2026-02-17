@@ -220,7 +220,7 @@ func (c *wsClient) writePump() {
 	}
 }
 
-func (c *wsClient) readPump() error {
+func (c *wsClient) readPump(onControl func(ctrl *pb.WSClientControl)) error {
 	c.conn.SetReadLimit(wsReadLimitBytes)
 	_ = c.conn.SetReadDeadline(time.Now().Add(wsPongWait))
 	c.conn.SetPongHandler(func(string) error {
@@ -240,10 +240,121 @@ func (c *wsClient) readPump() error {
 		if err := proto.Unmarshal(payload, &ctrl); err != nil {
 			continue
 		}
-		if strings.EqualFold(ctrl.GetOp(), "subscribe") {
-			c.setFilters(sliceToSet(ctrl.GetNodes()), sliceToSet(ctrl.GetCategories()))
+		if onControl != nil {
+			onControl(&ctrl)
 		}
 	}
+}
+
+func wsCommandErrorResult(nodeID, commandID string, commandType api.CommandType, err error) *api.CommandResult {
+	return &api.CommandResult{
+		CommandID:  commandID,
+		NodeID:     nodeID,
+		Type:       commandType,
+		Success:    false,
+		Error:      err.Error(),
+		FinishedAt: time.Now().UnixNano(),
+	}
+}
+
+func (s *Server) sendWSCommandResult(client *wsClient, result *api.CommandResult) {
+	if client == nil || result == nil {
+		return
+	}
+	payload, err := proto.Marshal(&pb.WSOutgoingMessage{
+		Type:          "command_result",
+		CommandResult: api.ToPBCommandResult(result),
+	})
+	if err != nil {
+		return
+	}
+	select {
+	case client.send <- payload:
+	default:
+		s.log.Warn().
+			Str("remote_addr", client.remoteAddr).
+			Str("command_id", result.CommandID).
+			Str("command_type", string(result.Type)).
+			Msg("dropping websocket command result for slow client")
+	}
+}
+
+func (s *Server) handleWSCommand(client *wsClient, req *pb.WSCommandRequest) {
+	if req == nil || req.GetCommand() == nil {
+		s.sendWSCommandResult(client, wsCommandErrorResult("", "", "", errInvalidCommandRequest))
+		return
+	}
+
+	pbCmd := req.GetCommand()
+	nodeID := strings.TrimSpace(req.GetNodeId())
+	if nodeID == "" {
+		nodeID = strings.TrimSpace(pbCmd.GetNodeId())
+	}
+	commandID := strings.TrimSpace(pbCmd.GetId())
+	commandType := api.CommandType(strings.TrimSpace(pbCmd.GetType()))
+
+	if nodeID == "" {
+		s.sendWSCommandResult(client, wsCommandErrorResult(nodeID, commandID, commandType, errMissingCommandNodeID))
+		return
+	}
+	if commandType == "" {
+		s.sendWSCommandResult(client, wsCommandErrorResult(nodeID, commandID, commandType, errMissingCommandType))
+		return
+	}
+
+	cmd := api.FromPBCommand(pbCmd)
+	if cmd == nil {
+		s.sendWSCommandResult(client, wsCommandErrorResult(nodeID, commandID, commandType, errInvalidCommandPayload))
+		return
+	}
+	cmd.NodeID = nodeID
+	cmd.Type = commandType
+	if commandID != "" {
+		cmd.ID = commandID
+	}
+
+	go func() {
+		ctx := context.Background()
+		var cancel context.CancelFunc
+		if s.cfg.CommandTimeout > 0 {
+			ctx, cancel = context.WithTimeout(ctx, s.cfg.CommandTimeout)
+		}
+		if cancel != nil {
+			defer cancel()
+		}
+
+		result, err := s.dispatchCommand(ctx, nodeID, cmd)
+		if err != nil {
+			if result == nil {
+				result = wsCommandErrorResult(nodeID, cmd.ID, cmd.Type, err)
+			}
+			s.sendWSCommandResult(client, result)
+			return
+		}
+		if result == nil {
+			s.sendWSCommandResult(client, wsCommandErrorResult(nodeID, cmd.ID, cmd.Type, errInvalidCommandPayload))
+			return
+		}
+		s.sendWSCommandResult(client, result)
+	}()
+}
+
+var (
+	errMissingCommandType    = &wsCommandError{msg: "missing command type"}
+	errMissingCommandNodeID  = &wsCommandError{msg: "missing command node_id"}
+	errInvalidCommandPayload = &wsCommandError{msg: "invalid command payload"}
+	errInvalidCommandRequest = &wsCommandError{msg: "invalid command request"}
+)
+
+type wsCommandError struct {
+	msg string
+}
+
+func (e *wsCommandError) Error() string {
+	if e == nil {
+		return "unknown websocket command error"
+	}
+	return e.msg
 }
 
 func (s *Server) handleWSMetrics(w http.ResponseWriter, r *http.Request) {
@@ -302,7 +413,18 @@ func (s *Server) handleWSMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go client.writePump()
-	if err := client.readPump(); err != nil && !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+	if err := client.readPump(func(ctrl *pb.WSClientControl) {
+		if ctrl == nil {
+			return
+		}
+		if strings.EqualFold(ctrl.GetOp(), "subscribe") {
+			client.setFilters(sliceToSet(ctrl.GetNodes()), sliceToSet(ctrl.GetCategories()))
+			return
+		}
+		if strings.EqualFold(ctrl.GetOp(), "command") {
+			s.handleWSCommand(client, ctrl.GetCommand())
+		}
+	}); err != nil && !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 		s.log.Debug().Err(err).Str("remote_addr", r.RemoteAddr).Msg("ws client closed")
 	}
 	s.log.Info().Str("remote_addr", r.RemoteAddr).Msg("ws client disconnected")

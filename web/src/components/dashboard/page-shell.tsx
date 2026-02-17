@@ -12,12 +12,11 @@ import { MemoryModuleView } from "./modules/memory/module";
 import { NetworkModuleView } from "./modules/network/module";
 import { ProcessModuleView } from "./modules/process/module";
 import { StorageModuleView } from "./modules/storage/module";
-import { postProtoCommand } from "./state/commands";
 import { useTelemetryWS } from "./state/ws-client";
 import type { TabKey } from "./types";
 
 export function DashboardShell() {
-  const { wsConnected, nodes, history } = useTelemetryWS();
+  const { wsConnected, nodes, history, sendCommand: sendCommandWS } = useTelemetryWS();
 
   const [selectedNodeId, setSelectedNodeId] = useState("");
   const [activeTab, setActiveTab] = useState<TabKey>("memory");
@@ -77,7 +76,7 @@ export function DashboardShell() {
     setCmdPending(true);
     setCmdMsg("");
     try {
-      const result = await postProtoCommand(selectedNodeId, commandType, payload);
+      const result = await sendCommandWS(selectedNodeId, commandType, payload);
       if (!result.ok) {
         setCmdMsg(result.message);
       }

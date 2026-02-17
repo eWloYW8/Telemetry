@@ -1,59 +1,61 @@
 import { telemetry as telemetryProto } from "@/lib/proto/telemetry";
 
-function encodeCommandPayload(commandType: string, payload: Record<string, unknown>): Uint8Array {
-  switch (commandType) {
-    case "cpu_scaling_range":
-      return telemetryProto.module.cpu.v1.ScalingRangeCommand.encode(
-        telemetryProto.module.cpu.v1.ScalingRangeCommand.create(payload),
-      ).finish();
-    case "cpu_governor":
-      return telemetryProto.module.cpu.v1.GovernorCommand.encode(
-        telemetryProto.module.cpu.v1.GovernorCommand.create(payload),
-      ).finish();
-    case "cpu_uncore_range":
-      return telemetryProto.module.cpu.v1.UncoreRangeCommand.encode(
-        telemetryProto.module.cpu.v1.UncoreRangeCommand.create(payload),
-      ).finish();
-    case "cpu_power_cap":
-      return telemetryProto.module.cpu.v1.PowerCapCommand.encode(
-        telemetryProto.module.cpu.v1.PowerCapCommand.create(payload),
-      ).finish();
-    case "gpu_clock_range":
-      return telemetryProto.module.gpu.v1.ClockRangeCommand.encode(
-        telemetryProto.module.gpu.v1.ClockRangeCommand.create(payload),
-      ).finish();
-    case "gpu_power_cap":
-      return telemetryProto.module.gpu.v1.PowerCapCommand.encode(
-        telemetryProto.module.gpu.v1.PowerCapCommand.create(payload),
-      ).finish();
-    case "process_signal":
-      return telemetryProto.module.process.v1.SignalCommand.encode(
-        telemetryProto.module.process.v1.SignalCommand.create(payload),
-      ).finish();
-    default:
-      throw new Error(`unsupported command type: ${commandType}`);
-  }
+let commandSeq = 0;
+
+export function nextCommandID(nodeId: string): string {
+  commandSeq += 1;
+  return `${nodeId}-${Date.now()}-${commandSeq}`;
 }
 
-export async function postProtoCommand(
+export function buildProtoCommand(
   nodeId: string,
   commandType: string,
   payload: Record<string, unknown>,
-): Promise<{ ok: boolean; message: string }> {
-  const body = encodeCommandPayload(commandType, payload);
-  const wire = new Uint8Array(body.byteLength);
-  wire.set(body);
-  const resp = await fetch(`/api/nodes/${nodeId}/commands/${commandType}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-protobuf",
-    },
-    body: wire.buffer as ArrayBuffer,
-  });
+  commandID: string,
+) {
+  const base = {
+    id: commandID,
+    nodeId,
+    type: commandType,
+  };
 
-  if (!resp.ok) {
-    return { ok: false, message: `${commandType}: ${resp.status}` };
+  switch (commandType) {
+    case "cpu_scaling_range":
+      return telemetryProto.v1.Command.create({
+        ...base,
+        cpuScalingRange: telemetryProto.module.cpu.v1.ScalingRangeCommand.create(payload),
+      });
+    case "cpu_governor":
+      return telemetryProto.v1.Command.create({
+        ...base,
+        cpuGovernor: telemetryProto.module.cpu.v1.GovernorCommand.create(payload),
+      });
+    case "cpu_uncore_range":
+      return telemetryProto.v1.Command.create({
+        ...base,
+        cpuUncoreRange: telemetryProto.module.cpu.v1.UncoreRangeCommand.create(payload),
+      });
+    case "cpu_power_cap":
+      return telemetryProto.v1.Command.create({
+        ...base,
+        cpuPowerCap: telemetryProto.module.cpu.v1.PowerCapCommand.create(payload),
+      });
+    case "gpu_clock_range":
+      return telemetryProto.v1.Command.create({
+        ...base,
+        gpuClockRange: telemetryProto.module.gpu.v1.ClockRangeCommand.create(payload),
+      });
+    case "gpu_power_cap":
+      return telemetryProto.v1.Command.create({
+        ...base,
+        gpuPowerCap: telemetryProto.module.gpu.v1.PowerCapCommand.create(payload),
+      });
+    case "process_signal":
+      return telemetryProto.v1.Command.create({
+        ...base,
+        processSignal: telemetryProto.module.process.v1.SignalCommand.create(payload),
+      });
+    default:
+      throw new Error(`unsupported command type: ${commandType}`);
   }
-
-  return { ok: true, message: `${commandType}: success` };
 }
