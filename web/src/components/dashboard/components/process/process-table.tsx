@@ -43,6 +43,9 @@ export function ProcessTable({
   commandPending,
   onSignal,
 }: ProcessTableProps) {
+  const compactCellClass = "py-0.5";
+  const signalButtonClass = "h-4 rounded-sm px-1 text-[9px] leading-none";
+
   const stateClass = (state: string): string => {
     switch (state) {
       case "R":
@@ -122,23 +125,32 @@ export function ProcessTable({
                   : undefined
               }
             >
-              <DenseTableCell className="font-mono">{p.pid}</DenseTableCell>
-              <DenseTableCell className="font-mono text-[var(--telemetry-muted-fg)]">{p.ppid}</DenseTableCell>
-              <DenseTableCell className="font-medium">{p.user}</DenseTableCell>
-              <DenseTableCell className={`font-mono ${stateClass(p.state)}`}>{p.state}</DenseTableCell>
-              <DenseTableCell className={`font-mono ${cpuClass(p.cpu)}`}>{formatPercent(p.cpu)}</DenseTableCell>
-              <DenseTableCell className={`font-mono ${memClass(p.memory)}`}>{formatBytes(p.memory)}</DenseTableCell>
-              <DenseTableCell className="max-w-[520px] overflow-hidden text-ellipsis font-mono" title={p.command}>
+              <DenseTableCell className={`${compactCellClass} font-mono`}>{p.pid}</DenseTableCell>
+              <DenseTableCell className={`${compactCellClass} font-mono text-[var(--telemetry-muted-fg)]`}>
+                {p.ppid}
+              </DenseTableCell>
+              <DenseTableCell className={`${compactCellClass} font-medium`}>{p.user}</DenseTableCell>
+              <DenseTableCell className={`${compactCellClass} font-mono ${stateClass(p.state)}`}>{p.state}</DenseTableCell>
+              <DenseTableCell className={`${compactCellClass} font-mono ${cpuClass(p.cpu)}`}>
+                {formatPercent(p.cpu)}
+              </DenseTableCell>
+              <DenseTableCell className={`${compactCellClass} font-mono ${memClass(p.memory)}`}>
+                {formatBytes(p.memory)}
+              </DenseTableCell>
+              <DenseTableCell
+                className={`${compactCellClass} max-w-[520px] overflow-hidden text-ellipsis font-mono`}
+                title={p.command}
+              >
                 {p.command}
               </DenseTableCell>
-              <DenseTableCell>
-                <div className="flex items-center gap-1">
+              <DenseTableCell className={compactCellClass}>
+                <div className="flex items-center gap-0.5">
                   <Button
                     size="xs"
                     variant="outline"
                     disabled={commandPending}
                     onClick={() => onSignal(p.pid, 15)}
-                    className="h-5 px-1.5 text-[10px]"
+                    className={signalButtonClass}
                   >
                     TERM
                   </Button>
@@ -147,7 +159,7 @@ export function ProcessTable({
                     variant="outline"
                     disabled={commandPending}
                     onClick={() => onSignal(p.pid, 2)}
-                    className="h-5 px-1.5 text-[10px]"
+                    className={signalButtonClass}
                   >
                     INT
                   </Button>
@@ -156,7 +168,7 @@ export function ProcessTable({
                     variant="destructive"
                     disabled={commandPending}
                     onClick={() => onSignal(p.pid, 9)}
-                    className="h-5 px-1.5 text-[10px]"
+                    className={signalButtonClass}
                   >
                     KILL
                   </Button>
@@ -165,7 +177,7 @@ export function ProcessTable({
                     variant="outline"
                     disabled={commandPending}
                     onClick={() => onSignal(p.pid, 19)}
-                    className="h-5 px-1.5 text-[10px]"
+                    className={signalButtonClass}
                   >
                     STOP
                   </Button>
@@ -174,7 +186,7 @@ export function ProcessTable({
                     variant="outline"
                     disabled={commandPending}
                     onClick={() => onSignal(p.pid, 18)}
-                    className="h-5 px-1.5 text-[10px]"
+                    className={signalButtonClass}
                   >
                     CONT
                   </Button>
