@@ -26,6 +26,8 @@ type GPUModuleViewProps = {
   sendCommand: (commandType: string, payload: Record<string, unknown>) => void;
 };
 
+const BYTES_PER_GB = 1024 * 1024 * 1024;
+
 export function gpuIndexesFromRegistration(registration: Record<string, any> | null): number[] {
   const gpuMeta = moduleMeta(registration, "gpu");
   const gpuStatic = ((gpuMeta?.static ?? []) as Array<Record<string, any>>)
@@ -223,6 +225,25 @@ export function GPUModuleView({
     });
   }, [historyByCategory.gpu_fast, gpuIndex]);
 
+  const gpuMemorySeries = useMemo(() => {
+    const list = historyByCategory.gpu_fast ?? [];
+    return list.map((item) => {
+      const devices = ((item.sample.gpuFastMetrics ?? item.sample.gpu_fast_metrics ?? {}).devices ?? []) as Array<
+        Record<string, any>
+      >;
+      const dev = devices.find((d) => numField(d, "index") === gpuIndex) ?? null;
+      const usedGB = numField(dev, "memoryUsedBytes", "memory_used_bytes") / BYTES_PER_GB;
+      return { tsNs: item.atNs.toString(), time: nsToTimeLabel(item.atNs), usedGB };
+    });
+  }, [historyByCategory.gpu_fast, gpuIndex]);
+
+  const gpuMemoryMaxBound = useMemo(() => {
+    const totalGB = numField(activeGPUStatic, "memoryTotalBytes", "memory_total_bytes") / BYTES_PER_GB;
+    if (totalGB > 0) return totalGB;
+    const sampleMax = gpuMemorySeries.reduce((acc, row) => Math.max(acc, numField(row, "usedGB")), 0);
+    return maxOr(sampleMax, 1);
+  }, [activeGPUStatic, gpuMemorySeries]);
+
   const gpuChartSuffix = `${nodeId || "node"}-gpu${gpuIndex}`;
 
   if (gpuIndex < 0) {
@@ -403,6 +424,14 @@ export function GPUModuleView({
               1000,
             ),
           ]}
+        />
+        <MetricChart
+          chartId={`gpu-memory-usage-${gpuChartSuffix}`}
+          title={`GPU ${gpuIndex} Memory Usage`}
+          yLabel="GB"
+          data={gpuMemorySeries}
+          lines={[{ key: "usedGB", label: "Used", color: "#9333ea" }]}
+          yDomain={[0, gpuMemoryMaxBound]}
         />
       </div>
     </>
