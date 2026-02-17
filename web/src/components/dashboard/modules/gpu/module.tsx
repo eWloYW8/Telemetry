@@ -6,6 +6,7 @@ import { Gauge } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 
 import { MetricChart } from "../../components/charts/metric-chart";
+import { ControlCard } from "../../components/ui/control-card";
 import type { RawHistorySample } from "../../types";
 import { maxOr } from "../../utils/rates";
 import { nsToTimeLabel } from "../../utils/time";
@@ -77,11 +78,13 @@ export function GPUModuleView({
   );
   const gpuCurrentMemMin = numField(activeGPUFast, "memClockMinMhz", "mem_clock_min_mhz");
   const gpuCurrentMemMax = numField(activeGPUFast, "memClockMaxMhz", "mem_clock_max_mhz");
-  const gpuCurrentSMClock = numField(activeGPUFast, "graphicsClockMhz", "graphics_clock_mhz");
-  const gpuCurrentMemClock = numField(activeGPUFast, "memoryClockMhz", "memory_clock_mhz");
+  const gpuSMMinBound = maxOr(gpuSMMinRaw, 1);
+  const gpuSMMaxBound = maxOr(gpuSMMaxRaw, gpuSMMinBound);
+  const gpuMemMinBound = maxOr(gpuMemMinRaw, 1);
+  const gpuMemMaxBound = maxOr(gpuMemMaxRaw, gpuMemMinBound);
 
-  const gpuCanTuneSM = gpuSMMinRaw > 0 && gpuSMMaxRaw > gpuSMMinRaw;
-  const gpuCanTuneMem = gpuMemMinRaw > 0 && gpuMemMaxRaw > gpuMemMinRaw;
+  const gpuCanTuneSM = gpuSMMaxBound > gpuSMMinBound;
+  const gpuCanTuneMem = gpuMemMaxBound > gpuMemMinBound;
 
   const gpuPowerMinBound = useMemo(() => {
     if (gpuPowerMinRaw > 0) return gpuPowerMinRaw;
@@ -124,18 +127,11 @@ export function GPUModuleView({
     if (Date.now() < clockSyncBlockUntilRef.current) return;
 
     if (gpuCanTuneSM) {
-      let backendMinRaw = 0;
-      let backendMaxRaw = 0;
-      if (gpuCurrentSMMin > 0 && gpuCurrentSMMax > 0) {
-        backendMinRaw = gpuCurrentSMMin;
-        backendMaxRaw = gpuCurrentSMMax;
-      } else if (gpuCurrentSMClock > 0) {
-        backendMinRaw = gpuCurrentSMClock;
-        backendMaxRaw = gpuCurrentSMClock;
-      }
-      if (backendMinRaw > 0 && backendMaxRaw > 0) {
-        const lo = clamp(Math.min(backendMinRaw, backendMaxRaw), gpuSMMinRaw, gpuSMMaxRaw);
-        const hi = clamp(Math.max(backendMinRaw, backendMaxRaw), gpuSMMinRaw, gpuSMMaxRaw);
+      const backendMinRaw = gpuCurrentSMMin > 0 ? gpuCurrentSMMin : gpuSMMinBound;
+      const backendMaxRaw = gpuCurrentSMMax > 0 ? gpuCurrentSMMax : gpuSMMaxBound;
+      if (backendMaxRaw > 0) {
+        const lo = clamp(Math.min(backendMinRaw, backendMaxRaw), gpuSMMinBound, gpuSMMaxBound);
+        const hi = clamp(Math.max(backendMinRaw, backendMaxRaw), gpuSMMinBound, gpuSMMaxBound);
         setGpuSMRange((prev) => (prev[0] === lo && prev[1] === hi ? prev : [lo, hi]));
       }
     } else {
@@ -143,18 +139,11 @@ export function GPUModuleView({
     }
 
     if (gpuCanTuneMem) {
-      let backendMinRaw = 0;
-      let backendMaxRaw = 0;
-      if (gpuCurrentMemMin > 0 && gpuCurrentMemMax > 0) {
-        backendMinRaw = gpuCurrentMemMin;
-        backendMaxRaw = gpuCurrentMemMax;
-      } else if (gpuCurrentMemClock > 0) {
-        backendMinRaw = gpuCurrentMemClock;
-        backendMaxRaw = gpuCurrentMemClock;
-      }
-      if (backendMinRaw > 0 && backendMaxRaw > 0) {
-        const lo = clamp(Math.min(backendMinRaw, backendMaxRaw), gpuMemMinRaw, gpuMemMaxRaw);
-        const hi = clamp(Math.max(backendMinRaw, backendMaxRaw), gpuMemMinRaw, gpuMemMaxRaw);
+      const backendMinRaw = gpuCurrentMemMin > 0 ? gpuCurrentMemMin : gpuMemMinBound;
+      const backendMaxRaw = gpuCurrentMemMax > 0 ? gpuCurrentMemMax : gpuMemMaxBound;
+      if (backendMaxRaw > 0) {
+        const lo = clamp(Math.min(backendMinRaw, backendMaxRaw), gpuMemMinBound, gpuMemMaxBound);
+        const hi = clamp(Math.max(backendMinRaw, backendMaxRaw), gpuMemMinBound, gpuMemMaxBound);
         setGpuMemRange((prev) => (prev[0] === lo && prev[1] === hi ? prev : [lo, hi]));
       }
     } else {
@@ -168,12 +157,10 @@ export function GPUModuleView({
     gpuCurrentSMMax,
     gpuCurrentMemMin,
     gpuCurrentMemMax,
-    gpuCurrentSMClock,
-    gpuCurrentMemClock,
-    gpuSMMinRaw,
-    gpuSMMaxRaw,
-    gpuMemMinRaw,
-    gpuMemMaxRaw,
+    gpuSMMinBound,
+    gpuSMMaxBound,
+    gpuMemMinBound,
+    gpuMemMaxBound,
     activeGPUFast,
   ]);
 
@@ -241,7 +228,7 @@ export function GPUModuleView({
   if (gpuIndex < 0) {
     return (
       <Section title="GPU Device" icon={<Gauge className="h-4 w-4" />}>
-        <div className="text-sm text-slate-500">No NVIDIA GPU discovered.</div>
+        <div className="text-sm text-[var(--telemetry-muted-fg)]">No NVIDIA GPU discovered.</div>
       </Section>
     );
   }
@@ -273,22 +260,24 @@ export function GPUModuleView({
 
       <Section title={`GPU ${gpuIndex} Controls`} icon={<Gauge className="h-4 w-4" />}>
         <div className="grid gap-3 lg:grid-cols-2">
-          <div className="space-y-3 border border-slate-200 p-3">
-            <div className="text-sm font-medium">Clock Range</div>
+          <ControlCard
+            title="Clock Range"
+            disabledNote={!gpuCanTuneSM && !gpuCanTuneMem ? "Clock range control unsupported on this GPU." : undefined}
+          >
             {gpuCanTuneSM ? (
               <div>
-                <div className="mb-1 text-xs text-slate-500">
+                <div className="mb-1 text-xs text-[var(--telemetry-muted-fg)]">
                   SM Clock {formatNumber(gpuSMRange[0])} ~ {formatNumber(gpuSMRange[1])} MHz
                 </div>
                 <Slider
-                  min={maxOr(gpuSMMinRaw, 1)}
-                  max={maxOr(gpuSMMaxRaw, 1)}
+                  min={gpuSMMinBound}
+                  max={gpuSMMaxBound}
                   step={1}
                   value={gpuSMRange}
                   onValueChange={(v) => {
                     const next: [number, number] = [
-                      clamp(v[0] ?? gpuSMRange[0], gpuSMMinRaw, gpuSMMaxRaw),
-                      clamp(v[1] ?? gpuSMRange[1], gpuSMMinRaw, gpuSMMaxRaw),
+                      clamp(v[0] ?? gpuSMRange[0], gpuSMMinBound, gpuSMMaxBound),
+                      clamp(v[1] ?? gpuSMRange[1], gpuSMMinBound, gpuSMMaxBound),
                     ];
                     const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
                     setIsEditingClock(true);
@@ -297,8 +286,8 @@ export function GPUModuleView({
                   }}
                   onValueCommit={(v) => {
                     const next: [number, number] = [
-                      clamp(v[0] ?? gpuSMRange[0], gpuSMMinRaw, gpuSMMaxRaw),
-                      clamp(v[1] ?? gpuSMRange[1], gpuSMMinRaw, gpuSMMaxRaw),
+                      clamp(v[0] ?? gpuSMRange[0], gpuSMMinBound, gpuSMMaxBound),
+                      clamp(v[1] ?? gpuSMRange[1], gpuSMMinBound, gpuSMMaxBound),
                     ];
                     const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
                     setGpuSMRange(fixed);
@@ -312,18 +301,18 @@ export function GPUModuleView({
 
             {gpuCanTuneMem ? (
               <div>
-                <div className="mb-1 text-xs text-slate-500">
+                <div className="mb-1 text-xs text-[var(--telemetry-muted-fg)]">
                   Memory Clock {formatNumber(gpuMemRange[0])} ~ {formatNumber(gpuMemRange[1])} MHz
                 </div>
                 <Slider
-                  min={maxOr(gpuMemMinRaw, 1)}
-                  max={maxOr(gpuMemMaxRaw, 1)}
+                  min={gpuMemMinBound}
+                  max={gpuMemMaxBound}
                   step={1}
                   value={gpuMemRange}
                   onValueChange={(v) => {
                     const next: [number, number] = [
-                      clamp(v[0] ?? gpuMemRange[0], gpuMemMinRaw, gpuMemMaxRaw),
-                      clamp(v[1] ?? gpuMemRange[1], gpuMemMinRaw, gpuMemMaxRaw),
+                      clamp(v[0] ?? gpuMemRange[0], gpuMemMinBound, gpuMemMaxBound),
+                      clamp(v[1] ?? gpuMemRange[1], gpuMemMinBound, gpuMemMaxBound),
                     ];
                     const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
                     setIsEditingClock(true);
@@ -332,8 +321,8 @@ export function GPUModuleView({
                   }}
                   onValueCommit={(v) => {
                     const next: [number, number] = [
-                      clamp(v[0] ?? gpuMemRange[0], gpuMemMinRaw, gpuMemMaxRaw),
-                      clamp(v[1] ?? gpuMemRange[1], gpuMemMinRaw, gpuMemMaxRaw),
+                      clamp(v[0] ?? gpuMemRange[0], gpuMemMinBound, gpuMemMaxBound),
+                      clamp(v[1] ?? gpuMemRange[1], gpuMemMinBound, gpuMemMaxBound),
                     ];
                     const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
                     setGpuMemRange(fixed);
@@ -344,16 +333,11 @@ export function GPUModuleView({
                 />
               </div>
             ) : null}
+          </ControlCard>
 
-            {!gpuCanTuneSM && !gpuCanTuneMem ? (
-              <div className="text-xs text-slate-500">Clock range control unsupported on this GPU.</div>
-            ) : null}
-          </div>
-
-          <div className="space-y-3 border border-slate-200 p-3">
-            <div className="text-sm font-medium">Power Cap</div>
+          <ControlCard title="Power Cap">
             <div>
-              <div className="mb-1 text-xs text-slate-500">Power Cap {formatPowerMilliW(gpuPowerCap)}</div>
+              <div className="mb-1 text-xs text-[var(--telemetry-muted-fg)]">Power Cap {formatPowerMilliW(gpuPowerCap)}</div>
               <Slider
                 min={gpuPowerMinBound}
                 max={gpuPowerMaxBound}
@@ -374,10 +358,10 @@ export function GPUModuleView({
                 }}
               />
             </div>
-          </div>
+          </ControlCard>
         </div>
 
-        {cmdMsg ? <div className="mt-2 text-xs text-slate-600">{cmdMsg}</div> : null}
+        {cmdMsg ? <div className="mt-2 text-xs text-[var(--telemetry-muted-fg)]">{cmdMsg}</div> : null}
       </Section>
 
       <div className="grid gap-3 lg:grid-cols-2">
@@ -397,7 +381,7 @@ export function GPUModuleView({
           title={`GPU ${gpuIndex} Power`}
           yLabel="W"
           data={gpuPowerSeries}
-          lines={[{ key: "powerW", label: "Power", color: "#9333ea" }]}
+          lines={[{ key: "powerW", label: "Power", color: "#0e7490" }]}
           yDomain={[0, maxOr(numField(activeGPUStatic, "powerMaxMilliwatt", "power_max_milliwatt") / 1000, 450)]}
         />
         <MetricChart

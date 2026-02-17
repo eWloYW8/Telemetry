@@ -14,6 +14,7 @@ import { Slider } from "@/components/ui/slider";
 
 import { MetricChart } from "../../components/charts/metric-chart";
 import { CpuCoreDenseTable } from "../../components/cpu/core-dense-table";
+import { ControlCard } from "../../components/ui/control-card";
 import type { CpuCoreDenseRow, RawHistorySample } from "../../types";
 import { deltaRate, maxOr } from "../../utils/rates";
 import { nsToTimeLabel } from "../../utils/time";
@@ -442,7 +443,7 @@ export function CPUModuleView({
   if (packageId < 0) {
     return (
       <Section title="CPU Device" icon={<Cpu className="h-4 w-4" />}>
-        <div className="text-sm text-slate-500">No CPU package discovered.</div>
+        <div className="text-sm text-[var(--telemetry-muted-fg)]">No CPU package discovered.</div>
       </Section>
     );
   }
@@ -470,10 +471,9 @@ export function CPUModuleView({
 
       <Section title={`CPU ${packageId} Controls`} icon={<Thermometer className="h-4 w-4" />}>
         <div className="grid gap-3 lg:grid-cols-2">
-          <div className="space-y-3 border border-slate-200 p-3">
-            <div className="text-sm font-medium">Scaling and Governor</div>
+          <ControlCard title="Scaling and Governor">
             <div>
-              <div className="mb-1 text-xs text-slate-500">
+              <div className="mb-1 text-xs text-[var(--telemetry-muted-fg)]">
                 Scaling Range {formatKHz(cpuRange[0])} ~ {formatKHz(cpuRange[1])}
               </div>
               <Slider
@@ -506,7 +506,7 @@ export function CPUModuleView({
             </div>
 
             <div>
-              <div className="mb-1 text-xs text-slate-500">Governor</div>
+              <div className="mb-1 text-xs text-[var(--telemetry-muted-fg)]">Governor</div>
               <Select
                 value={cpuGovernor}
                 onValueChange={(value) => {
@@ -527,13 +527,15 @@ export function CPUModuleView({
                 </SelectContent>
               </Select>
             </div>
-          </div>
+          </ControlCard>
 
-          <div className="space-y-3 border border-slate-200 p-3">
-            <div className="text-sm font-medium">{showUncore ? "Uncore and RAPL" : "RAPL"}</div>
+          <ControlCard
+            title={showUncore ? "Uncore and RAPL" : "RAPL"}
+            disabledNote={!canControlUncore && showUncore ? "Uncore range control is unavailable on this platform." : undefined}
+          >
             {showUncore ? (
               <div>
-                <div className="mb-1 text-xs text-slate-500">
+                <div className="mb-1 text-xs text-[var(--telemetry-muted-fg)]">
                   Uncore Range {formatKHz(uncoreRange[0])} ~ {formatKHz(uncoreRange[1])}
                 </div>
                 <Slider
@@ -568,7 +570,7 @@ export function CPUModuleView({
             ) : null}
 
             <div>
-              <div className="mb-1 text-xs text-slate-500">Power Cap {formatPowerMicroW(cpuPowerCap)}</div>
+              <div className="mb-1 text-xs text-[var(--telemetry-muted-fg)]">Power Cap {formatPowerMicroW(cpuPowerCap)}</div>
               <Slider
                 min={cpuPowerSliderMin}
                 max={cpuPowerSliderMax}
@@ -589,10 +591,10 @@ export function CPUModuleView({
                 }}
               />
             </div>
-          </div>
+          </ControlCard>
         </div>
 
-        {cmdMsg ? <div className="mt-2 text-xs text-slate-600">{cmdMsg}</div> : null}
+        {cmdMsg ? <div className="mt-2 text-xs text-[var(--telemetry-muted-fg)]">{cmdMsg}</div> : null}
       </Section>
 
       <Section title={`CPU ${packageId} Per-Core Runtime`} icon={<Cpu className="h-4 w-4" />}>
@@ -639,7 +641,7 @@ export function CPUModuleView({
           title={`CPU ${packageId} Package Power`}
           yLabel="W"
           data={cpuPowerSeries}
-          lines={[{ key: "powerW", label: "Power", color: "#7c3aed" }]}
+          lines={[{ key: "powerW", label: "Power", color: "#0e7490" }]}
           yDomain={[0, cpuPowerMaxBound]}
         />
       </div>

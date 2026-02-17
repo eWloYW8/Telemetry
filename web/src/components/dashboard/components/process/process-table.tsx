@@ -5,6 +5,15 @@ import type { MouseEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 
+import {
+  DenseTable,
+  DenseTableBody,
+  DenseTableCell,
+  DenseTableFrame,
+  DenseTableHead,
+  DenseTableHeaderCell,
+  DenseTableRow,
+} from "../ui/dense-table";
 import type { ProcessRow, ProcessSortKey, SortDir } from "../../types";
 import { formatBytes, formatPercent } from "../../utils/units";
 
@@ -20,7 +29,7 @@ type ProcessTableProps = {
 };
 
 function SortIcon({ active, dir }: { active: boolean; dir: SortDir }) {
-  if (!active) return <span className="text-slate-300">-</span>;
+  if (!active) return <span className="text-[var(--telemetry-muted-fg)] opacity-50">-</span>;
   return dir === "asc" ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />;
 }
 
@@ -37,31 +46,34 @@ export function ProcessTable({
   const stateClass = (state: string): string => {
     switch (state) {
       case "R":
-        return "text-emerald-600";
+        return "text-[var(--telemetry-success)]";
       case "S":
-        return "text-blue-600";
+        return "text-[var(--telemetry-accent)]";
       case "D":
-        return "text-amber-600";
+        return "text-[var(--telemetry-warning)]";
       case "Z":
-        return "text-red-600";
+        return "text-[var(--telemetry-danger)]";
       case "T":
-        return "text-orange-600";
+        return "text-[var(--telemetry-warning)]";
       default:
-        return "text-slate-700";
+        return "text-[var(--telemetry-text)]";
     }
   };
+
   const cpuClass = (cpu: number): string => {
-    if (cpu >= 80) return "text-red-600";
-    if (cpu >= 40) return "text-orange-600";
-    if (cpu >= 15) return "text-amber-600";
-    return "text-emerald-600";
+    if (cpu >= 80) return "text-[var(--telemetry-danger)]";
+    if (cpu >= 40) return "text-[var(--telemetry-warning)]";
+    if (cpu >= 15) return "text-[var(--telemetry-accent)]";
+    return "text-[var(--telemetry-success)]";
   };
+
   const memClass = (bytes: number): string => {
-    if (bytes >= 8 * 1024 * 1024 * 1024) return "text-red-600";
-    if (bytes >= 2 * 1024 * 1024 * 1024) return "text-orange-600";
-    if (bytes >= 512 * 1024 * 1024) return "text-amber-600";
-    return "text-slate-700";
+    if (bytes >= 8 * 1024 * 1024 * 1024) return "text-[var(--telemetry-danger)]";
+    if (bytes >= 2 * 1024 * 1024 * 1024) return "text-[var(--telemetry-warning)]";
+    if (bytes >= 512 * 1024 * 1024) return "text-[var(--telemetry-accent)]";
+    return "text-[var(--telemetry-text)]";
   };
+
   const onRowClick = (evt: MouseEvent<HTMLTableRowElement>, pid: number) => {
     const target = evt.target as HTMLElement | null;
     if (target?.closest("button")) return;
@@ -69,9 +81,9 @@ export function ProcessTable({
   };
 
   return (
-    <div className="w-full overflow-x-auto rounded-lg border border-slate-200 text-[11px]">
-      <table className="w-full min-w-[1180px] table-auto">
-        <thead className="sticky top-0 z-20 bg-slate-50">
+    <DenseTableFrame>
+      <DenseTable className="min-w-[1180px] table-auto">
+        <DenseTableHead>
           <tr>
             {[
               ["PID", "pid"],
@@ -82,41 +94,47 @@ export function ProcessTable({
               ["Memory", "memory"],
               ["Command", "command"],
             ].map(([label, key]) => (
-              <th key={key} className="border-b border-slate-200 px-3 py-1 text-left font-medium uppercase tracking-wide text-slate-600">
+              <DenseTableHeaderCell key={key}>
                 <button
                   type="button"
-                  className="inline-flex items-center gap-1 hover:text-slate-900"
+                  className="inline-flex items-center gap-1 text-[var(--telemetry-muted-fg)] transition-colors hover:text-[var(--telemetry-text)]"
                   onClick={() => onSort(key as ProcessSortKey)}
                 >
                   {label}
                   <SortIcon active={sortKey === key} dir={sortDir} />
                 </button>
-              </th>
+              </DenseTableHeaderCell>
             ))}
-            <th className="border-b border-slate-200 px-3 py-1 text-left font-medium uppercase tracking-wide text-slate-600">Signals</th>
+            <DenseTableHeaderCell>Signals</DenseTableHeaderCell>
           </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100 bg-white">
+        </DenseTableHead>
+        <DenseTableBody>
           {rows.map((p) => (
-            <tr
+            <DenseTableRow
               key={`proc-${p.pid}`}
-              className={`hover:bg-slate-50 ${pinnedPids.has(p.pid) ? "bg-amber-50/70" : ""}`}
               onClick={(evt) => onRowClick(evt, p.pid)}
               title={pinnedPids.has(p.pid) ? "Click row to unpin" : "Click row to pin on top"}
+              style={
+                pinnedPids.has(p.pid)
+                  ? {
+                      background: "color-mix(in oklch, var(--telemetry-accent-soft) 82%, white 18%)",
+                    }
+                  : undefined
+              }
             >
-              <td className="px-3 py-0.5 whitespace-nowrap font-mono">{p.pid}</td>
-              <td className="px-3 py-0.5 whitespace-nowrap font-mono text-slate-500">{p.ppid}</td>
-              <td className="px-3 py-0.5 whitespace-nowrap font-medium">{p.user}</td>
-              <td className={`px-3 py-0.5 whitespace-nowrap font-mono ${stateClass(p.state)}`}>{p.state}</td>
-              <td className={`px-3 py-0.5 whitespace-nowrap font-mono ${cpuClass(p.cpu)}`}>{formatPercent(p.cpu)}</td>
-              <td className={`px-3 py-0.5 whitespace-nowrap font-mono ${memClass(p.memory)}`}>{formatBytes(p.memory)}</td>
-              <td className="max-w-[520px] overflow-hidden text-ellipsis px-3 py-0.5 whitespace-nowrap font-mono" title={p.command}>
+              <DenseTableCell className="font-mono">{p.pid}</DenseTableCell>
+              <DenseTableCell className="font-mono text-[var(--telemetry-muted-fg)]">{p.ppid}</DenseTableCell>
+              <DenseTableCell className="font-medium">{p.user}</DenseTableCell>
+              <DenseTableCell className={`font-mono ${stateClass(p.state)}`}>{p.state}</DenseTableCell>
+              <DenseTableCell className={`font-mono ${cpuClass(p.cpu)}`}>{formatPercent(p.cpu)}</DenseTableCell>
+              <DenseTableCell className={`font-mono ${memClass(p.memory)}`}>{formatBytes(p.memory)}</DenseTableCell>
+              <DenseTableCell className="max-w-[520px] overflow-hidden text-ellipsis font-mono" title={p.command}>
                 {p.command}
-              </td>
-              <td className="px-3 py-0.5 whitespace-nowrap">
+              </DenseTableCell>
+              <DenseTableCell>
                 <div className="flex items-center gap-1">
                   <Button
-                    size="sm"
+                    size="xs"
                     variant="outline"
                     disabled={commandPending}
                     onClick={() => onSignal(p.pid, 15)}
@@ -125,7 +143,7 @@ export function ProcessTable({
                     TERM
                   </Button>
                   <Button
-                    size="sm"
+                    size="xs"
                     variant="outline"
                     disabled={commandPending}
                     onClick={() => onSignal(p.pid, 2)}
@@ -134,7 +152,7 @@ export function ProcessTable({
                     INT
                   </Button>
                   <Button
-                    size="sm"
+                    size="xs"
                     variant="destructive"
                     disabled={commandPending}
                     onClick={() => onSignal(p.pid, 9)}
@@ -143,7 +161,7 @@ export function ProcessTable({
                     KILL
                   </Button>
                   <Button
-                    size="sm"
+                    size="xs"
                     variant="outline"
                     disabled={commandPending}
                     onClick={() => onSignal(p.pid, 19)}
@@ -152,7 +170,7 @@ export function ProcessTable({
                     STOP
                   </Button>
                   <Button
-                    size="sm"
+                    size="xs"
                     variant="outline"
                     disabled={commandPending}
                     onClick={() => onSignal(p.pid, 18)}
@@ -161,11 +179,11 @@ export function ProcessTable({
                     CONT
                   </Button>
                 </div>
-              </td>
-            </tr>
+              </DenseTableCell>
+            </DenseTableRow>
           ))}
-        </tbody>
-      </table>
-    </div>
+        </DenseTableBody>
+      </DenseTable>
+    </DenseTableFrame>
   );
 }

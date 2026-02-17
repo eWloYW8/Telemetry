@@ -4,6 +4,7 @@ package gpu
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
 )
@@ -24,19 +25,27 @@ func (c *Controller) SetClockRange(gpuIndex int, smMinMHz, smMaxMHz, memMinMHz, 
 		return fmt.Errorf("invalid gpu index %d", gpuIndex)
 	}
 	dev := c.collector.devices[gpuIndex]
+	var errs []string
+
 	if smMinMHz > 0 || smMaxMHz > 0 {
 		ret := nvml.DeviceSetGpuLockedClocks(dev, smMinMHz, smMaxMHz)
 		if ret != nvml.SUCCESS {
-			return fmt.Errorf("set gpu locked clocks: %s", ret.Error())
+			errs = append(errs, fmt.Sprintf("set gpu locked clocks: %s", ret.Error()))
+		} else {
+			c.collector.updateLockRange(gpuIndex, smMinMHz, smMaxMHz, 0, 0)
 		}
 	}
 	if memMinMHz > 0 || memMaxMHz > 0 {
 		ret := nvml.DeviceSetMemoryLockedClocks(dev, memMinMHz, memMaxMHz)
 		if ret != nvml.SUCCESS {
-			return fmt.Errorf("set memory locked clocks: %s", ret.Error())
+			errs = append(errs, fmt.Sprintf("set memory locked clocks: %s", ret.Error()))
+		} else {
+			c.collector.updateLockRange(gpuIndex, 0, 0, memMinMHz, memMaxMHz)
 		}
 	}
-	c.collector.updateLockRange(gpuIndex, smMinMHz, smMaxMHz, memMinMHz, memMaxMHz)
+	if len(errs) > 0 {
+		return fmt.Errorf(strings.Join(errs, "; "))
+	}
 	return nil
 }
 

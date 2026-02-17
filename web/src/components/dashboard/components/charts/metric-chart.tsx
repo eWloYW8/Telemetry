@@ -12,6 +12,14 @@ import {
   YAxis,
 } from "recharts";
 
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
 import type { ChartLineDef } from "../../types";
 import { nsToPreciseLabel, toBigIntNs } from "../../utils/time";
 import { formatNumber } from "../../utils/units";
@@ -119,8 +127,8 @@ export function MetricChart({ chartId, title, yLabel, data, lines, yDomain }: Me
     const row = (payload[0]?.payload ?? {}) as Record<string, number | string>;
     const ts = rowTsNs(row);
     return (
-      <div className="rounded border border-slate-200 bg-white p-2 shadow">
-        <div className="mb-1 text-[11px] font-medium text-slate-700">
+      <div className="telemetry-panel min-w-[170px] p-2 shadow-md">
+        <div className="mb-1 text-[11px] font-medium text-[var(--telemetry-text)]">
           {ts > 0n ? nsToPreciseLabel(ts) : "timestamp unavailable"}
         </div>
         <div className="space-y-0.5 text-[11px]">
@@ -128,11 +136,11 @@ export function MetricChart({ chartId, title, yLabel, data, lines, yDomain }: Me
             const value = Number(p.value ?? 0);
             return (
               <div key={`${p.dataKey ?? idx}`} className="flex items-center justify-between gap-3">
-                <span className="inline-flex items-center gap-1">
+                <span className="inline-flex items-center gap-1 text-[var(--telemetry-muted-fg)]">
                   <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: p.color }} />
                   {String(p.name ?? p.dataKey)}
                 </span>
-                <span className="font-mono">{formatNumber(value, 3)}</span>
+                <span className="font-mono text-[var(--telemetry-text)]">{formatNumber(value, 3)}</span>
               </div>
             );
           })}
@@ -142,28 +150,29 @@ export function MetricChart({ chartId, title, yLabel, data, lines, yDomain }: Me
   };
 
   return (
-    <div className="border border-slate-200 bg-white">
-      <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2">
-        <div className="text-sm font-semibold text-slate-900">{title}</div>
+    <div className="telemetry-panel overflow-hidden">
+      <div className="telemetry-panel-header flex items-center justify-between gap-3">
+        <div className="telemetry-title">{title}</div>
         <div className="flex items-center gap-2">
-          <span className="text-xs text-slate-500">Window</span>
-          <select
-            className="h-7 rounded border border-slate-300 bg-white px-2 text-xs text-slate-700"
-            value={String(windowSec)}
-            onChange={(e) => setWindowSec(Number(e.target.value))}
-          >
-            {windowOptions.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
+          <span className="telemetry-muted">Window</span>
+          <Select value={String(windowSec)} onValueChange={(value) => setWindowSec(Number(value))}>
+            <SelectTrigger size="sm" className="h-7 w-[84px] bg-[var(--telemetry-surface-soft)] text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="end">
+              {windowOptions.map((opt) => (
+                <SelectItem key={opt.value} value={String(opt.value)}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </div>
       <div className="h-56 w-full px-2 py-2">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={chartData}>
-            <CartesianGrid strokeDasharray="2 2" />
+            <CartesianGrid stroke="var(--telemetry-border-subtle)" strokeDasharray="3 3" />
             <XAxis
               type="number"
               dataKey="__xMs"
@@ -171,15 +180,25 @@ export function MetricChart({ chartId, title, yLabel, data, lines, yDomain }: Me
               allowDataOverflow
               tickFormatter={formatXAxisTick}
               minTickGap={18}
+              tick={{ fill: "var(--telemetry-muted-fg)", fontSize: 11 }}
+              axisLine={{ stroke: "var(--telemetry-border)" }}
+              tickLine={{ stroke: "var(--telemetry-border)" }}
             />
             <YAxis
               width={70}
               domain={yDomain ?? ["auto", "auto"]}
               tickFormatter={(value) => formatNumber(Number(value), 3)}
-              label={{ value: yLabel, angle: -90, position: "insideLeft" }}
+              tick={{ fill: "var(--telemetry-muted-fg)", fontSize: 11 }}
+              axisLine={{ stroke: "var(--telemetry-border)" }}
+              tickLine={{ stroke: "var(--telemetry-border)" }}
+              label={{ value: yLabel, angle: -90, position: "insideLeft", fill: "var(--telemetry-muted-fg)", fontSize: 11 }}
             />
-            <Tooltip content={renderTooltip} />
-            <Legend />
+            <Tooltip content={renderTooltip} cursor={{ stroke: "var(--telemetry-border-strong)" }} />
+            <Legend
+              iconSize={8}
+              wrapperStyle={{ fontSize: "11px", color: "var(--telemetry-muted-fg)" }}
+              formatter={(value) => <span style={{ color: "var(--telemetry-muted-fg)" }}>{String(value)}</span>}
+            />
             {lines.map((line) => (
               <Line
                 key={line.key}

@@ -4,6 +4,15 @@ import { useMemo } from "react";
 import { Network } from "lucide-react";
 
 import { MetricChart } from "../../components/charts/metric-chart";
+import {
+  DenseTable,
+  DenseTableBody,
+  DenseTableCell,
+  DenseTableFrame,
+  DenseTableHead,
+  DenseTableHeaderCell,
+  DenseTableRow,
+} from "../../components/ui/dense-table";
 import type { ChartLineDef, RawHistorySample } from "../../types";
 import { deltaRate } from "../../utils/rates";
 import { nsToTimeLabel } from "../../utils/time";
@@ -113,57 +122,41 @@ export function NetworkModuleView({ latestRaw, historyByCategory }: NetworkModul
   return (
     <>
       <Section title="Network Snapshot" icon={<Network className="h-4 w-4" />}>
-        <div className="w-full overflow-x-auto rounded-lg border border-slate-200 text-[11px]">
-          <table className="w-full min-w-[780px] table-auto">
-            <thead className="sticky top-0 z-20 bg-slate-50">
+        <DenseTableFrame>
+          <DenseTable className="min-w-[780px] table-auto">
+            <DenseTableHead>
               <tr>
-                <th className="border-b border-slate-200 px-3 py-1 text-left font-medium uppercase tracking-wide text-slate-600">
-                  Interface
-                </th>
-                <th className="border-b border-slate-200 px-3 py-1 text-left font-medium uppercase tracking-wide text-slate-600">
-                  IPs
-                </th>
-                <th className="border-b border-slate-200 px-3 py-1 text-left font-medium uppercase tracking-wide text-slate-600">
-                  RX Bytes
-                </th>
-                <th className="border-b border-slate-200 px-3 py-1 text-left font-medium uppercase tracking-wide text-slate-600">
-                  TX Bytes
-                </th>
-                <th className="border-b border-slate-200 px-3 py-1 text-left font-medium uppercase tracking-wide text-slate-600">
-                  RX Packets
-                </th>
-                <th className="border-b border-slate-200 px-3 py-1 text-left font-medium uppercase tracking-wide text-slate-600">
-                  TX Packets
-                </th>
+                <DenseTableHeaderCell>Interface</DenseTableHeaderCell>
+                <DenseTableHeaderCell>IPs</DenseTableHeaderCell>
+                <DenseTableHeaderCell>RX Bytes</DenseTableHeaderCell>
+                <DenseTableHeaderCell>TX Bytes</DenseTableHeaderCell>
+                <DenseTableHeaderCell>RX Packets</DenseTableHeaderCell>
+                <DenseTableHeaderCell>TX Packets</DenseTableHeaderCell>
               </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 bg-white">
+            </DenseTableHead>
+            <DenseTableBody>
               {networkRows.map((itf) => (
-                <tr key={`if-${strField(itf, "name")}`} className="hover:bg-slate-50">
-                  <td className="px-3 py-0.5 whitespace-nowrap font-mono">{strField(itf, "name") || "-"}</td>
-                  <td
-                    className="max-w-[360px] overflow-hidden text-ellipsis px-3 py-0.5 whitespace-nowrap"
+                <DenseTableRow key={`if-${strField(itf, "name")}`}>
+                  <DenseTableCell className="font-mono">{strField(itf, "name") || "-"}</DenseTableCell>
+                  <DenseTableCell
+                    className="max-w-[360px] overflow-hidden text-ellipsis"
                     title={((itf.ips ?? []) as string[]).join(", ") || "-"}
                   >
                     {((itf.ips ?? []) as string[]).join(", ") || "-"}
-                  </td>
-                  <td className="px-3 py-0.5 whitespace-nowrap font-mono">
-                    {formatBytes(numField(itf, "rxBytes", "rx_bytes"))}
-                  </td>
-                  <td className="px-3 py-0.5 whitespace-nowrap font-mono">
-                    {formatBytes(numField(itf, "txBytes", "tx_bytes"))}
-                  </td>
-                  <td className="px-3 py-0.5 whitespace-nowrap font-mono">
+                  </DenseTableCell>
+                  <DenseTableCell className="font-mono">{formatBytes(numField(itf, "rxBytes", "rx_bytes"))}</DenseTableCell>
+                  <DenseTableCell className="font-mono">{formatBytes(numField(itf, "txBytes", "tx_bytes"))}</DenseTableCell>
+                  <DenseTableCell className="font-mono">
                     {formatNumber(numField(itf, "rxPackets", "rx_packets"), 0)}
-                  </td>
-                  <td className="px-3 py-0.5 whitespace-nowrap font-mono">
+                  </DenseTableCell>
+                  <DenseTableCell className="font-mono">
                     {formatNumber(numField(itf, "txPackets", "tx_packets"), 0)}
-                  </td>
-                </tr>
+                  </DenseTableCell>
+                </DenseTableRow>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </DenseTableBody>
+          </DenseTable>
+        </DenseTableFrame>
       </Section>
 
       <div className="grid gap-3 lg:grid-cols-2">

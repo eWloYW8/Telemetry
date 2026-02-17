@@ -81,11 +81,11 @@ export function ProcessModuleView({ latestRaw, historyByCategory, cmdPending, cm
   };
 
   return (
-    <Section title="Process Table" icon={<Activity className="h-4 w-4" />}>
-      <div className="mb-2 text-xs text-slate-500">
-        Ctld-style dense table: sticky header, sortable columns, one-line rows, horizontal scrolling, common
-        signal actions.
-      </div>
+    <Section
+      title="Process Table"
+      icon={<Activity className="h-4 w-4" />}
+      compact
+    >
       <ProcessTable
         rows={processRows}
         sortKey={procSortKey}
@@ -96,7 +96,7 @@ export function ProcessModuleView({ latestRaw, historyByCategory, cmdPending, cm
         commandPending={cmdPending}
         onSignal={(pid, signal) => sendCommand("process_signal", { pid, signal })}
       />
-      {cmdMsg ? <div className="mt-2 text-xs text-slate-600">{cmdMsg}</div> : null}
+      {cmdMsg ? <div className="mt-2 text-xs text-[var(--telemetry-muted-fg)]">{cmdMsg}</div> : null}
     </Section>
   );
 }

@@ -4,6 +4,15 @@ import { useMemo } from "react";
 import { HardDrive } from "lucide-react";
 
 import { MetricChart } from "../../components/charts/metric-chart";
+import {
+  DenseTable,
+  DenseTableBody,
+  DenseTableCell,
+  DenseTableFrame,
+  DenseTableHead,
+  DenseTableHeaderCell,
+  DenseTableRow,
+} from "../../components/ui/dense-table";
 import type { ChartLineDef, RawHistorySample } from "../../types";
 import { deltaRate } from "../../utils/rates";
 import { nsToTimeLabel } from "../../utils/time";
@@ -131,20 +140,20 @@ export function StorageModuleView({ latestRaw, registration, historyByCategory }
   return (
     <>
       <Section title="Storage Snapshot" icon={<HardDrive className="h-4 w-4" />}>
-        <div className="w-full overflow-x-auto rounded-lg border border-slate-200 text-[11px]">
-          <table className="w-full min-w-[900px] table-auto">
-            <thead className="sticky top-0 z-20 bg-slate-50">
+        <DenseTableFrame>
+          <DenseTable className="min-w-[900px] table-auto">
+            <DenseTableHead>
               <tr>
-                <th className="border-b border-slate-200 px-3 py-1 text-left font-medium uppercase tracking-wide text-slate-600">Disk</th>
-                <th className="border-b border-slate-200 px-3 py-1 text-left font-medium uppercase tracking-wide text-slate-600">Mount</th>
-                <th className="border-b border-slate-200 px-3 py-1 text-left font-medium uppercase tracking-wide text-slate-600">FS</th>
-                <th className="border-b border-slate-200 px-3 py-1 text-left font-medium uppercase tracking-wide text-slate-600">Total</th>
-                <th className="border-b border-slate-200 px-3 py-1 text-left font-medium uppercase tracking-wide text-slate-600">Used</th>
-                <th className="border-b border-slate-200 px-3 py-1 text-left font-medium uppercase tracking-wide text-slate-600">Free</th>
-                <th className="border-b border-slate-200 px-3 py-1 text-left font-medium uppercase tracking-wide text-slate-600">Usage %</th>
+                <DenseTableHeaderCell>Disk</DenseTableHeaderCell>
+                <DenseTableHeaderCell>Mount</DenseTableHeaderCell>
+                <DenseTableHeaderCell>FS</DenseTableHeaderCell>
+                <DenseTableHeaderCell>Total</DenseTableHeaderCell>
+                <DenseTableHeaderCell>Used</DenseTableHeaderCell>
+                <DenseTableHeaderCell>Free</DenseTableHeaderCell>
+                <DenseTableHeaderCell>Usage %</DenseTableHeaderCell>
               </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 bg-white">
+            </DenseTableHead>
+            <DenseTableBody>
               {storageRows.map((d) => {
                 const used = numField(d, "usedBytes", "used_bytes");
                 const free = numField(d, "freeBytes", "free_bytes");
@@ -153,27 +162,27 @@ export function StorageModuleView({ latestRaw, registration, historyByCategory }
                   (storageMeta?.staticDisks ?? storageMeta?.static_disks ?? []) as Array<Record<string, any>>
                 ).find((s) => strField(s, "name") === strField(d, "name"));
                 return (
-                  <tr key={`disk-${strField(d, "name")}`} className="hover:bg-slate-50">
-                    <td className="px-3 py-0.5 whitespace-nowrap font-mono">{strField(d, "name") || "-"}</td>
-                    <td
-                      className="max-w-[280px] overflow-hidden text-ellipsis px-3 py-0.5 whitespace-nowrap"
+                  <DenseTableRow key={`disk-${strField(d, "name")}`}>
+                    <DenseTableCell className="font-mono">{strField(d, "name") || "-"}</DenseTableCell>
+                    <DenseTableCell
+                      className="max-w-[280px] overflow-hidden text-ellipsis"
                       title={strField(staticInfo, "mountpoint") || "-"}
                     >
                       {strField(staticInfo, "mountpoint") || "-"}
-                    </td>
-                    <td className="px-3 py-0.5 whitespace-nowrap">{strField(staticInfo, "filesystem") || "-"}</td>
-                    <td className="px-3 py-0.5 whitespace-nowrap font-mono">{formatBytes(total)}</td>
-                    <td className="px-3 py-0.5 whitespace-nowrap font-mono">{formatBytes(used)}</td>
-                    <td className="px-3 py-0.5 whitespace-nowrap font-mono">{formatBytes(free)}</td>
-                    <td className="px-3 py-0.5 whitespace-nowrap font-mono">
+                    </DenseTableCell>
+                    <DenseTableCell>{strField(staticInfo, "filesystem") || "-"}</DenseTableCell>
+                    <DenseTableCell className="font-mono">{formatBytes(total)}</DenseTableCell>
+                    <DenseTableCell className="font-mono">{formatBytes(used)}</DenseTableCell>
+                    <DenseTableCell className="font-mono">{formatBytes(free)}</DenseTableCell>
+                    <DenseTableCell className="font-mono">
                       {total > 0 ? formatPercent((used * 100) / total) : "0 %"}
-                    </td>
-                  </tr>
+                    </DenseTableCell>
+                  </DenseTableRow>
                 );
               })}
-            </tbody>
-          </table>
-        </div>
+            </DenseTableBody>
+          </DenseTable>
+        </DenseTableFrame>
       </Section>
 
       <div className="grid gap-3 lg:grid-cols-2">

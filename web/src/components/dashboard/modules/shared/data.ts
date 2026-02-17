@@ -40,11 +40,11 @@ export function sampledAtNs(v: Record<string, any>, fallback: bigint): bigint {
 
 export function moduleMeta(registration: Record<string, any> | null | undefined, moduleName: string) {
   const modules = (registration?.modules ?? []) as Array<Record<string, any>>;
-  for (const module of modules) {
-    if (module.name !== moduleName) continue;
-    if (module[moduleName]) return module[moduleName] as Record<string, any>;
+  for (const moduleEntry of modules) {
+    if (moduleEntry.name !== moduleName) continue;
+    if (moduleEntry[moduleName]) return moduleEntry[moduleName] as Record<string, any>;
     for (const key of ["cpu", "gpu", "memory", "storage", "network", "process"]) {
-      if (module[key]) return module[key] as Record<string, any>;
+      if (moduleEntry[key]) return moduleEntry[key] as Record<string, any>;
     }
   }
   return null;
@@ -71,12 +71,12 @@ export function formatIDRanges(ids: number[]): string {
 }
 
 export const linePalette = [
-  "#0369a1",
-  "#16a34a",
-  "#9333ea",
-  "#b45309",
   "#0f766e",
-  "#dc2626",
   "#1d4ed8",
-  "#a21caf",
+  "#b45309",
+  "#0e7490",
+  "#15803d",
+  "#c2410c",
+  "#334155",
+  "#0284c7",
 ];

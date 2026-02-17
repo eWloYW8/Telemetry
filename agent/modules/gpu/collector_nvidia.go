@@ -54,12 +54,22 @@ func NewCollector() (*Collector, error) {
 		uuid, _ := nvml.DeviceGetUUID(dev)
 		mem, _ := nvml.DeviceGetMemoryInfo(dev)
 		minP, maxP, _ := nvml.DeviceGetPowerManagementLimitConstraints(dev)
-		smMin, smMax := getClockRange(dev, nvml.CLOCK_SM)
+		smMinRaw, smMaxRaw := getClockRange(dev, nvml.CLOCK_SM)
+		smGraphicsMin, smGraphicsMax := getClockRange(dev, nvml.CLOCK_GRAPHICS)
+		smMin, smMax := pickPreferredRange(smMinRaw, smMaxRaw, smGraphicsMin, smGraphicsMax)
 		memMin, memMax := getClockRange(dev, nvml.CLOCK_MEM)
-		smCur, _ := nvml.DeviceGetClockInfo(dev, nvml.CLOCK_SM)
-		memCur, _ := nvml.DeviceGetClockInfo(dev, nvml.CLOCK_MEM)
-		smNowMin, smNowMax := getClockTarget(deviceClockGetter{dev, nvml.CLOCK_SM}, smCur)
-		memNowMin, memNowMax := getClockTarget(deviceClockGetter{dev, nvml.CLOCK_MEM}, memCur)
+		smStateMin, smStateMax := normalizeConfiguredRange(smMin, smMax)
+		memStateMin, memStateMax := normalizeConfiguredRange(memMin, memMax)
+		if smStateMin > 0 && smStateMax >= smStateMin {
+			if ret := nvml.DeviceSetGpuLockedClocks(dev, smStateMin, smStateMax); ret == nvml.SUCCESS {
+				smStateMin, smStateMax = normalizeConfiguredRange(smStateMin, smStateMax)
+			}
+		}
+		if memStateMin > 0 && memStateMax >= memStateMin {
+			if ret := nvml.DeviceSetMemoryLockedClocks(dev, memStateMin, memStateMax); ret == nvml.SUCCESS {
+				memStateMin, memStateMax = normalizeConfiguredRange(memStateMin, memStateMax)
+			}
+		}
 		collector.static = append(collector.static, StaticInfo{
 			Index:             i,
 			Name:              name,
@@ -73,10 +83,10 @@ func NewCollector() (*Collector, error) {
 			MemClockMaxMHz:    memMax,
 		})
 		collector.lockStates[i] = lockClockState{
-			SMMinMHz:  smNowMin,
-			SMMaxMHz:  smNowMax,
-			MemMinMHz: memNowMin,
-			MemMaxMHz: memNowMax,
+			SMMinMHz:  smStateMin,
+			SMMaxMHz:  smStateMax,
+			MemMinMHz: memStateMin,
+			MemMaxMHz: memStateMax,
 		}
 	}
 
@@ -112,7 +122,7 @@ func (g *Collector) CollectFast() (*FastMetrics, error) {
 		smClock, _ := nvml.DeviceGetClockInfo(dev, nvml.CLOCK_SM)
 		memClock, _ := nvml.DeviceGetClockInfo(dev, nvml.CLOCK_MEM)
 		limit, _ := nvml.DeviceGetPowerManagementLimit(dev)
-		smTargetMin, smTargetMax, memTargetMin, memTargetMax := g.currentLockRange(i, dev, smClock, memClock)
+		smTargetMin, smTargetMax, memTargetMin, memTargetMax := g.currentLockRange(i, dev)
 		sampledAt := time.Now().UnixNano()
 
 		out.Devices = append(out.Devices, DeviceFastMetrics{
@@ -135,32 +145,90 @@ func (g *Collector) CollectFast() (*FastMetrics, error) {
 	return out, nil
 }
 
-type deviceClockGetter struct {
-	device nvml.Device
-	clock  nvml.ClockType
+func normalizeConfiguredRange(minMHz, maxMHz uint32) (uint32, uint32) {
+	switch {
+	case minMHz > 0 && maxMHz > 0:
+		if minMHz > maxMHz {
+			return maxMHz, minMHz
+		}
+		return minMHz, maxMHz
+	case minMHz > 0:
+		return minMHz, minMHz
+	case maxMHz > 0:
+		return 0, maxMHz
+	default:
+		return 0, 0
+	}
 }
 
-func getClockTarget(getter deviceClockGetter, fallbackCurrent uint32) (uint32, uint32) {
-	if appClock, ret := nvml.DeviceGetApplicationsClock(getter.device, getter.clock); ret == nvml.SUCCESS && appClock > 0 {
-		return appClock, appClock
+func pickPreferredRange(primaryMin, primaryMax, fallbackMin, fallbackMax uint32) (uint32, uint32) {
+	primaryValid := primaryMin > 0 && primaryMax > primaryMin
+	fallbackValid := fallbackMin > 0 && fallbackMax > fallbackMin
+	switch {
+	case primaryValid && !fallbackValid:
+		return primaryMin, primaryMax
+	case !primaryValid && fallbackValid:
+		return fallbackMin, fallbackMax
+	case primaryValid && fallbackValid:
+		if fallbackMax-fallbackMin > primaryMax-primaryMin {
+			return fallbackMin, fallbackMax
+		}
+		return primaryMin, primaryMax
+	case primaryMax > 0:
+		return primaryMin, primaryMax
+	default:
+		return fallbackMin, fallbackMax
 	}
-	if fallbackCurrent > 0 {
-		return fallbackCurrent, fallbackCurrent
-	}
-	return 0, 0
 }
 
-func (g *Collector) currentLockRange(index int, device nvml.Device, smCurrentMHz, memCurrentMHz uint32) (uint32, uint32, uint32, uint32) {
+func (g *Collector) staticLockRange(index int, dev nvml.Device) (uint32, uint32, uint32, uint32) {
+	var smMinRaw, smMaxRaw uint32
+	var memMinRaw, memMaxRaw uint32
+
+	if index >= 0 && index < len(g.static) {
+		smMinRaw = g.static[index].SMClockMinMHz
+		smMaxRaw = g.static[index].SMClockMaxMHz
+		memMinRaw = g.static[index].MemClockMinMHz
+		memMaxRaw = g.static[index].MemClockMaxMHz
+	}
+
+	if smMaxRaw == 0 {
+		minSM, maxSM := getClockRange(dev, nvml.CLOCK_SM)
+		minGraphics, maxGraphics := getClockRange(dev, nvml.CLOCK_GRAPHICS)
+		min, max := pickPreferredRange(minSM, maxSM, minGraphics, maxGraphics)
+		if smMinRaw == 0 {
+			smMinRaw = min
+		}
+		if smMaxRaw == 0 {
+			smMaxRaw = max
+		}
+	}
+	if memMaxRaw == 0 {
+		min, max := getClockRange(dev, nvml.CLOCK_MEM)
+		if memMinRaw == 0 {
+			memMinRaw = min
+		}
+		if memMaxRaw == 0 {
+			memMaxRaw = max
+		}
+	}
+
+	smMin, smMax := normalizeConfiguredRange(smMinRaw, smMaxRaw)
+	memMin, memMax := normalizeConfiguredRange(memMinRaw, memMaxRaw)
+	return smMin, smMax, memMin, memMax
+}
+
+func (g *Collector) currentLockRange(index int, device nvml.Device) (uint32, uint32, uint32, uint32) {
 	g.mu.RLock()
 	state, ok := g.lockStates[index]
 	g.mu.RUnlock()
 	if ok && (state.SMMinMHz > 0 || state.SMMaxMHz > 0 || state.MemMinMHz > 0 || state.MemMaxMHz > 0) {
-		return state.SMMinMHz, state.SMMaxMHz, state.MemMinMHz, state.MemMaxMHz
+		smMin, smMax := normalizeConfiguredRange(state.SMMinMHz, state.SMMaxMHz)
+		memMin, memMax := normalizeConfiguredRange(state.MemMinMHz, state.MemMaxMHz)
+		return smMin, smMax, memMin, memMax
 	}
 
-	smMin, smMax := getClockTarget(deviceClockGetter{device, nvml.CLOCK_SM}, smCurrentMHz)
-	memMin, memMax := getClockTarget(deviceClockGetter{device, nvml.CLOCK_MEM}, memCurrentMHz)
-
+	smMin, smMax, memMin, memMax := g.staticLockRange(index, device)
 	g.mu.Lock()
 	g.lockStates[index] = lockClockState{
 		SMMinMHz:  smMin,
@@ -169,7 +237,6 @@ func (g *Collector) currentLockRange(index int, device nvml.Device, smCurrentMHz
 		MemMaxMHz: memMax,
 	}
 	g.mu.Unlock()
-
 	return smMin, smMax, memMin, memMax
 }
 
@@ -181,19 +248,41 @@ func (g *Collector) updateLockRange(index int, smMinMHz, smMaxMHz, memMinMHz, me
 	defer g.mu.Unlock()
 	state := g.lockStates[index]
 	if smMinMHz > 0 || smMaxMHz > 0 {
-		state.SMMinMHz = smMinMHz
-		state.SMMaxMHz = smMaxMHz
+		smMin, smMax := normalizeConfiguredRange(smMinMHz, smMaxMHz)
+		state.SMMinMHz = smMin
+		state.SMMaxMHz = smMax
 	}
 	if memMinMHz > 0 || memMaxMHz > 0 {
-		state.MemMinMHz = memMinMHz
-		state.MemMaxMHz = memMaxMHz
+		memMin, memMax := normalizeConfiguredRange(memMinMHz, memMaxMHz)
+		state.MemMinMHz = memMin
+		state.MemMaxMHz = memMax
 	}
 	g.lockStates[index] = state
 }
 
 func getClockRange(device nvml.Device, t nvml.ClockType) (uint32, uint32) {
+	pstates, ret := nvml.DeviceGetSupportedPerformanceStates(device)
+	if ret == nvml.SUCCESS && len(pstates) > 0 {
+		var minClock, maxClock uint32
+		for _, pstate := range pstates {
+			minP, maxP, pRet := nvml.DeviceGetMinMaxClockOfPState(device, t, pstate)
+			if pRet != nvml.SUCCESS || maxP == 0 {
+				continue
+			}
+			if minP > 0 && (minClock == 0 || minP < minClock) {
+				minClock = minP
+			}
+			if maxP > maxClock {
+				maxClock = maxP
+			}
+		}
+		if maxClock > 0 {
+			return minClock, maxClock
+		}
+	}
+
 	minClock, maxClock, ret := nvml.DeviceGetMinMaxClockOfPState(device, t, nvml.PSTATE_0)
-	if ret == nvml.SUCCESS {
+	if ret == nvml.SUCCESS && maxClock > 0 {
 		return minClock, maxClock
 	}
 	maxClock, ret = nvml.DeviceGetMaxClockInfo(device, t)
