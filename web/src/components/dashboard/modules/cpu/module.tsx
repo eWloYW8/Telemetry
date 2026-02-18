@@ -719,6 +719,8 @@ export function CPUModuleView({
           yLabel="%"
           data={cpuUsageSeries}
           lines={[{ key: "utilPct", label: "Utilization", color: "#0f766e" }]}
+          showCurrentStatus
+          currentValueFormatter={(value) => `${formatNumber(value, 0)}%`}
           yDomain={[0, 100]}
         />
         <MetricChart
@@ -730,6 +732,8 @@ export function CPUModuleView({
             { key: "avgMHz", label: "Core", color: "#0369a1" },
             ...(showUncore ? [{ key: "uncoreMHz", label: "Uncore", color: "#15803d" }] : []),
           ]}
+          showCurrentStatus
+          currentValueFormatter={(value) => `${formatNumber(value, 0)} MHz`}
           yDomain={[0, showUncore ? Math.max(cpuScaleMaxBound / 1000, cpuUncoreMaxBound) : cpuScaleMaxBound / 1000]}
         />
         <MetricChart
@@ -738,6 +742,8 @@ export function CPUModuleView({
           yLabel="C"
           data={cpuTempSeries}
           lines={[{ key: "tempC", label: "Temperature", color: "#dc2626" }]}
+          showCurrentStatus
+          currentValueFormatter={(value) => `${formatNumber(value, 1)} C`}
           yDomain={[0, cpuTempMaxBound]}
         />
         <MetricChart
@@ -746,6 +752,8 @@ export function CPUModuleView({
           yLabel="W"
           data={cpuPowerSeries}
           lines={[{ key: "powerW", label: "Power", color: "#0e7490" }]}
+          showCurrentStatus
+          currentValueFormatter={(value) => `${formatNumber(value, 1)} W`}
           yDomain={[0, cpuPowerMaxBound]}
         />
       </div>

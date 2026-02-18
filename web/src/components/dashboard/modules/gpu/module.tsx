@@ -395,6 +395,8 @@ export function GPUModuleView({
             { key: "gpuUtilPct", label: "GPU", color: "#0f766e" },
             { key: "memUtilPct", label: "MEM", color: "#0ea5e9" },
           ]}
+          showCurrentStatus
+          currentValueFormatter={(value) => `${formatNumber(value, 0)}%`}
           yDomain={[0, 100]}
         />
         <MetricChart
@@ -403,6 +405,8 @@ export function GPUModuleView({
           yLabel="W"
           data={gpuPowerSeries}
           lines={[{ key: "powerW", label: "Power", color: "#0e7490" }]}
+          showCurrentStatus
+          currentValueFormatter={(value) => `${formatNumber(value, 1)} W`}
           yDomain={[0, maxOr(numField(activeGPUStatic, "powerMaxMilliwatt", "power_max_milliwatt") / 1000, 450)]}
         />
         <MetricChart
@@ -414,6 +418,8 @@ export function GPUModuleView({
             { key: "smMHz", label: "SM", color: "#b45309" },
             { key: "memMHz", label: "MEM", color: "#2563eb" },
           ]}
+          showCurrentStatus
+          currentValueFormatter={(value) => `${formatNumber(value, 0)} MHz`}
           yDomain={[
             0,
             maxOr(
@@ -431,6 +437,8 @@ export function GPUModuleView({
           yLabel="GB"
           data={gpuMemorySeries}
           lines={[{ key: "usedGB", label: "Used", color: "#9333ea" }]}
+          showCurrentStatus
+          currentValueFormatter={(value) => `${formatNumber(value, 2)} GB`}
           yDomain={[0, gpuMemoryMaxBound]}
         />
       </div>

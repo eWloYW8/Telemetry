@@ -153,6 +153,27 @@ export function RichControlSlider({
   }, [majorTicks, min, max, minorTicksPerMajor]);
 
   const majorLabelStride = useMemo(() => Math.max(1, Math.ceil(majorTicks.length / 14)), [majorTicks.length]);
+  const estimateTickLabelWidthPx = (text: string) => Math.max(16, text.length * 6.1 + 4);
+  const onlyShowBoundaryTickLabels = (() => {
+    if (majorTicks.length <= 2 || trackWidth <= 0) return false;
+
+    let prevRight = -Infinity;
+    for (let index = 0; index < majorTicks.length; index += 1) {
+      const tick = majorTicks[index];
+      const shouldShowByStride =
+        majorTicks.length <= 14 || index === 0 || index === majorTicks.length - 1 || index % majorLabelStride === 0;
+      if (!shouldShowByStride) continue;
+
+      const center = ((clampNumber(tick, min, max) - min) / range) * trackWidth;
+      const label = renderTick(tick);
+      const half = estimateTickLabelWidthPx(label) / 2;
+      const left = center - half;
+      const right = center + half;
+      if (left <= prevRight + 2) return true;
+      prevRight = Math.max(prevRight, right);
+    }
+    return false;
+  })();
 
   const updateValues = (thumbIndex: number, rawValue: number, commit: boolean) => {
     const next = values.slice();
@@ -273,9 +294,9 @@ export function RichControlSlider({
 
   useEffect(() => {
     let raf = 0;
-    const alphaThumb = 0.22;
-    const alphaCurrent = 0.14;
-    const epsilon = 0.05;
+    const alphaThumb = 0.9;
+    const alphaCurrent = 0.5;
+    const epsilon = 0.005;
 
     const tick = () => {
       let needNext = false;
@@ -414,7 +435,7 @@ export function RichControlSlider({
   })();
 
   return (
-    <div className={cn("relative h-20", className, sliderClassName)}>
+    <div className={cn("relative h-12", className, sliderClassName)}>
       <div className="absolute inset-y-0 left-3 right-3">
       <div
         ref={trackRef}
@@ -442,7 +463,10 @@ export function RichControlSlider({
           className="absolute w-px h-2 bg-gray-400 -translate-x-1/2 -translate-y-1/2"
           style={{ left: `${toPercent(tick)}%`, top: "50%" }}
         >
-          {majorTicks.length <= 14 || index === 0 || index === majorTicks.length - 1 || index % majorLabelStride === 0 ? (
+          {index === 0 ||
+          index === majorTicks.length - 1 ||
+          (!onlyShowBoundaryTickLabels &&
+            (majorTicks.length <= 14 || index % majorLabelStride === 0)) ? (
             <div className="absolute -top-5 -translate-x-1/2 text-[10px] text-gray-500">{renderTick(tick)}</div>
           ) : null}
         </div>

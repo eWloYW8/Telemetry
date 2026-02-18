@@ -31,6 +31,8 @@ type MetricChartProps = {
   data: Array<Record<string, number | string>>;
   lines: ChartLineDef[];
   yDomain?: [number | "auto" | "dataMin" | "dataMax", number | "auto" | "dataMin" | "dataMax"];
+  showCurrentStatus?: boolean;
+  currentValueFormatter?: (value: number, line: ChartLineDef) => string;
 };
 
 const windowOptions: Array<{ value: number; label: string }> = [
@@ -53,7 +55,16 @@ function rowTsNs(row: Record<string, number | string>): bigint {
   return toBigIntNs((row.tsNs ?? row.ts_ns ?? 0) as string | number);
 }
 
-export function MetricChart({ chartId, title, yLabel, data, lines, yDomain }: MetricChartProps) {
+export function MetricChart({
+  chartId,
+  title,
+  yLabel,
+  data,
+  lines,
+  yDomain,
+  showCurrentStatus = false,
+  currentValueFormatter,
+}: MetricChartProps) {
   const storageKey = `telemetry.chart.window.${chartId}`;
   const [windowSec, setWindowSec] = useState<number>(defaultWindowSec);
 
@@ -149,11 +160,64 @@ export function MetricChart({ chartId, title, yLabel, data, lines, yDomain }: Me
     );
   };
 
+  const currentStatusItems = useMemo(() => {
+    if (!showCurrentStatus) return [] as Array<{ line: ChartLineDef; text: string }>;
+    return lines
+      .map((line) => {
+        let bestTs = -1n;
+        let bestValue: number | null = null;
+
+        for (const row of data) {
+          const ts = rowTsNs(row);
+          if (ts <= 0n) continue;
+          const raw = row[line.key];
+          const value = typeof raw === "number" ? raw : Number(raw);
+          if (!Number.isFinite(value)) continue;
+          if (ts >= bestTs) {
+            bestTs = ts;
+            bestValue = value;
+          }
+        }
+
+        if (bestValue === null) {
+          for (let i = data.length - 1; i >= 0; i -= 1) {
+            const raw = data[i]?.[line.key];
+            const value = typeof raw === "number" ? raw : Number(raw);
+            if (Number.isFinite(value)) {
+              bestValue = value;
+              break;
+            }
+          }
+        }
+
+        if (bestValue === null) return null;
+        const text = currentValueFormatter ? currentValueFormatter(bestValue, line) : formatNumber(bestValue, 3);
+        return { line, text };
+      })
+      .filter((item): item is { line: ChartLineDef; text: string } => item !== null);
+  }, [showCurrentStatus, lines, data, currentValueFormatter]);
+
   return (
     <div className="telemetry-panel overflow-hidden">
-      <div className="telemetry-panel-header flex items-center justify-between gap-3">
-        <div className="telemetry-title">{title}</div>
-        <div className="flex items-center gap-2">
+      <div className="telemetry-panel-header flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <div className="telemetry-title">{title}</div>
+            {currentStatusItems.length > 0 ? (
+              <div className="inline-flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[14px] tracking-tight">
+                {currentStatusItems.map((item) => (
+                  <span key={`${chartId}-${item.line.key}`} className="inline-flex items-center gap-1">
+                    {currentStatusItems.length > 1 ? (
+                      <span style={{ color: item.line.color }}>{item.line.label}:</span>
+                    ) : null}
+                    <span className="text-[var(--telemetry-text)]">{item.text}</span>
+                  </span>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
           <span className="telemetry-muted">Window</span>
           <Select value={String(windowSec)} onValueChange={(value) => setWindowSec(Number(value))}>
             <SelectTrigger size="sm" className="h-7 w-[84px] bg-[var(--telemetry-surface-soft)] text-xs">

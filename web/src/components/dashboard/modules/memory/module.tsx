@@ -7,7 +7,7 @@ import { MetricChart } from "../../components/charts/metric-chart";
 import type { RawHistorySample } from "../../types";
 import { maxOr } from "../../utils/rates";
 import { nsToTimeLabel } from "../../utils/time";
-import { formatBytes } from "../../utils/units";
+import { formatBytes, formatNumber } from "../../utils/units";
 import { moduleMeta, numField } from "../shared/data";
 import { Section, StatRow } from "../shared/section";
 
@@ -56,6 +56,8 @@ export function MemoryModuleView({ registration, latestRaw, historyByCategory }:
           { key: "usedGB", label: "Used", color: "#b91c1c" },
           { key: "cachedGB", label: "Cached", color: "#0f766e" },
         ]}
+        showCurrentStatus
+        currentValueFormatter={(value) => `${formatNumber(value, 2)} GB`}
         yDomain={[0, maxOr(numField(memoryMeta?.static, "totalBytes", "total_bytes") / 1024 / 1024 / 1024, 1)]}
       />
     </>
