@@ -1,6 +1,6 @@
 package process
 
-import "telemetry/api"
+import "github.com/eWloYW8/Telemetry/api"
 
 const (
 	Category             api.MetricCategory = "process"

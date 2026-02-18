@@ -3,7 +3,7 @@ package process
 import (
 	"time"
 
-	"telemetry/config"
+	"github.com/eWloYW8/Telemetry/config"
 )
 
 type Module struct {

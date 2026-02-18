@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package telemetry.v1;
 
-option go_package = "telemetry/api/pb;pb";
+option go_package = "github.com/eWloYW8/Telemetry/api/pb;pb";
 
 import "api/pb/telemetry.proto";
 

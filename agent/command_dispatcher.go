@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	control "telemetry/agent/executor"
-	"telemetry/api"
+	control "github.com/eWloYW8/Telemetry/agent/executor"
+	"github.com/eWloYW8/Telemetry/api"
 )
 
 type commandDispatcher struct {

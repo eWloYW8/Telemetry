@@ -1,6 +1,6 @@
 package cpu
 
-import "telemetry/api"
+import "github.com/eWloYW8/Telemetry/api"
 
 const (
 	CategoryUltra  api.MetricCategory = "cpu_ultra_fast"

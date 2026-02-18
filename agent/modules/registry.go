@@ -5,7 +5,7 @@ import (
 	"sort"
 	"time"
 
-	"telemetry/api"
+	"github.com/eWloYW8/Telemetry/api"
 )
 
 type CollectorFunc func(at time.Time) (api.MetricSample, error)

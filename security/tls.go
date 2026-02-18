@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"telemetry/config"
+	"github.com/eWloYW8/Telemetry/config"
 )
 
 func LoadServerTLSConfig(cfg config.TLSConfig) (*tls.Config, error) {

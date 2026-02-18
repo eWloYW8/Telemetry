@@ -1,6 +1,6 @@
 package process
 
-import processpb "telemetry/agent/modules/process/pb"
+import processpb "github.com/eWloYW8/Telemetry/agent/modules/process/pb"
 
 func toPBModuleRegistration(v *Registration) *processpb.ModuleRegistration {
 	if v == nil {

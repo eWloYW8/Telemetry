@@ -1,6 +1,6 @@
 package gpu
 
-import "telemetry/api"
+import "github.com/eWloYW8/Telemetry/api"
 
 const (
 	CategoryFast api.MetricCategory = "gpu_fast"

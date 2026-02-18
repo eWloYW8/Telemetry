@@ -3,8 +3,8 @@ package control
 import (
 	"time"
 
-	"telemetry/agent/modules"
-	"telemetry/api"
+	"github.com/eWloYW8/Telemetry/agent/modules"
+	"github.com/eWloYW8/Telemetry/api"
 )
 
 type Executor struct {

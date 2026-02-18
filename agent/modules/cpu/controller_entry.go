@@ -3,9 +3,9 @@ package cpu
 import (
 	"fmt"
 
-	"telemetry/agent/modules"
-	cpupb "telemetry/agent/modules/cpu/pb"
-	"telemetry/api"
+	"github.com/eWloYW8/Telemetry/agent/modules"
+	cpupb "github.com/eWloYW8/Telemetry/agent/modules/cpu/pb"
+	"github.com/eWloYW8/Telemetry/api"
 )
 
 func (m *Module) ControllerEntries() []modules.ControllerEntry {

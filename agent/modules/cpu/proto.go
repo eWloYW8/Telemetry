@@ -1,6 +1,6 @@
 package cpu
 
-import cpupb "telemetry/agent/modules/cpu/pb"
+import cpupb "github.com/eWloYW8/Telemetry/agent/modules/cpu/pb"
 
 func toPBModuleRegistration(v *Registration) *cpupb.ModuleRegistration {
 	if v == nil {

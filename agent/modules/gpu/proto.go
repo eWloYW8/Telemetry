@@ -1,6 +1,6 @@
 package gpu
 
-import gpupb "telemetry/agent/modules/gpu/pb"
+import gpupb "github.com/eWloYW8/Telemetry/agent/modules/gpu/pb"
 
 func toPBModuleRegistration(v *Registration) *gpupb.ModuleRegistration {
 	if v == nil {

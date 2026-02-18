@@ -6,9 +6,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"telemetry/agent"
-	"telemetry/config"
-	"telemetry/logging"
+	"github.com/eWloYW8/Telemetry/agent"
+	"github.com/eWloYW8/Telemetry/config"
+	"github.com/eWloYW8/Telemetry/logging"
 )
 
 func main() {

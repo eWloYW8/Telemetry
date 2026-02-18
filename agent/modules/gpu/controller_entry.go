@@ -3,9 +3,9 @@ package gpu
 import (
 	"fmt"
 
-	"telemetry/agent/modules"
-	gpupb "telemetry/agent/modules/gpu/pb"
-	"telemetry/api"
+	"github.com/eWloYW8/Telemetry/agent/modules"
+	gpupb "github.com/eWloYW8/Telemetry/agent/modules/gpu/pb"
+	"github.com/eWloYW8/Telemetry/api"
 )
 
 func (m *Module) ControllerEntries() []modules.ControllerEntry {

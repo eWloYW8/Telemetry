@@ -1,13 +1,13 @@
 package api
 
 import (
-	cpupb "telemetry/agent/modules/cpu/pb"
-	gpupb "telemetry/agent/modules/gpu/pb"
-	memorypb "telemetry/agent/modules/memory/pb"
-	networkpb "telemetry/agent/modules/network/pb"
-	processpb "telemetry/agent/modules/process/pb"
-	storagepb "telemetry/agent/modules/storage/pb"
-	transportpb "telemetry/api/pb"
+	cpupb "github.com/eWloYW8/Telemetry/agent/modules/cpu/pb"
+	gpupb "github.com/eWloYW8/Telemetry/agent/modules/gpu/pb"
+	memorypb "github.com/eWloYW8/Telemetry/agent/modules/memory/pb"
+	networkpb "github.com/eWloYW8/Telemetry/agent/modules/network/pb"
+	processpb "github.com/eWloYW8/Telemetry/agent/modules/process/pb"
+	storagepb "github.com/eWloYW8/Telemetry/agent/modules/storage/pb"
+	transportpb "github.com/eWloYW8/Telemetry/api/pb"
 )
 
 const (

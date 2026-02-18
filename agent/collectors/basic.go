@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"telemetry/api"
+	"github.com/eWloYW8/Telemetry/api"
 )
 
 func CollectBasicInfo() (api.BasicInfo, error) {

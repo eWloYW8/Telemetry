@@ -5,7 +5,7 @@ import (
 	"sort"
 	"sync"
 
-	"telemetry/api"
+	"github.com/eWloYW8/Telemetry/api"
 )
 
 type nodeBuffer struct {

@@ -13,8 +13,8 @@ import (
 	"github.com/rs/zerolog"
 	"google.golang.org/protobuf/proto"
 
-	"telemetry/api"
-	pb "telemetry/api/pb"
+	"github.com/eWloYW8/Telemetry/api"
+	pb "github.com/eWloYW8/Telemetry/api/pb"
 )
 
 const (

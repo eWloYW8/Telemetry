@@ -13,11 +13,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"google.golang.org/protobuf/proto"
 
-	cpupb "telemetry/agent/modules/cpu/pb"
-	gpupb "telemetry/agent/modules/gpu/pb"
-	processpb "telemetry/agent/modules/process/pb"
-	"telemetry/api"
-	pb "telemetry/api/pb"
+	cpupb "github.com/eWloYW8/Telemetry/agent/modules/cpu/pb"
+	gpupb "github.com/eWloYW8/Telemetry/agent/modules/gpu/pb"
+	processpb "github.com/eWloYW8/Telemetry/agent/modules/process/pb"
+	"github.com/eWloYW8/Telemetry/api"
+	pb "github.com/eWloYW8/Telemetry/api/pb"
 )
 
 const maxProtoPayloadBytes = 1 << 20

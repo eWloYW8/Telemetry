@@ -1,6 +1,6 @@
 package storage
 
-import storagepb "telemetry/agent/modules/storage/pb"
+import storagepb "github.com/eWloYW8/Telemetry/agent/modules/storage/pb"
 
 func toPBModuleRegistration(v *Registration) *storagepb.ModuleRegistration {
 	if v == nil {

@@ -8,7 +8,7 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"telemetry/config"
+	"github.com/eWloYW8/Telemetry/config"
 )
 
 func New(cfg config.LogConfig, component string) zerolog.Logger {

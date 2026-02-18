@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"syscall"
 
-	"telemetry/agent/modules"
-	processpb "telemetry/agent/modules/process/pb"
-	"telemetry/api"
+	"github.com/eWloYW8/Telemetry/agent/modules"
+	processpb "github.com/eWloYW8/Telemetry/agent/modules/process/pb"
+	"github.com/eWloYW8/Telemetry/api"
 )
 
 func (m *Module) ControllerEntries() []modules.ControllerEntry {

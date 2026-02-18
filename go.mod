@@ -1,4 +1,4 @@
-module telemetry
+module github.com/eWloYW8/Telemetry
 
 go 1.22.0
 

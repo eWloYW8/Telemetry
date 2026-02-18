@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package telemetry.module.gpu.v1;
 
-option go_package = "telemetry/agent/modules/gpu/pb;gpupb";
+option go_package = "github.com/eWloYW8/Telemetry/agent/modules/gpu/pb;gpupb";
 
 message CollectorSpec {
   string category = 1;

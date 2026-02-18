@@ -17,10 +17,10 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
 
-	"telemetry/api"
-	pb "telemetry/api/pb"
-	"telemetry/config"
-	"telemetry/security"
+	"github.com/eWloYW8/Telemetry/api"
+	pb "github.com/eWloYW8/Telemetry/api/pb"
+	"github.com/eWloYW8/Telemetry/config"
+	"github.com/eWloYW8/Telemetry/security"
 )
 
 type nodeSession struct {

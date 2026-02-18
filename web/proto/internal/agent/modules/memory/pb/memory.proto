@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package telemetry.module.memory.v1;
 
-option go_package = "telemetry/agent/modules/memory/pb;memorypb";
+option go_package = "github.com/eWloYW8/Telemetry/agent/modules/memory/pb;memorypb";
 
 message CollectorSpec {
   string category = 1;

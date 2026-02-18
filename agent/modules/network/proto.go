@@ -1,6 +1,6 @@
 package network
 
-import networkpb "telemetry/agent/modules/network/pb"
+import networkpb "github.com/eWloYW8/Telemetry/agent/modules/network/pb"
 
 func toPBModuleRegistration(v *Registration) *networkpb.ModuleRegistration {
 	if v == nil {

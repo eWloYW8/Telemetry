@@ -1,6 +1,6 @@
 package memory
 
-import memorypb "telemetry/agent/modules/memory/pb"
+import memorypb "github.com/eWloYW8/Telemetry/agent/modules/memory/pb"
 
 func toPBModuleRegistration(v *Registration) *memorypb.ModuleRegistration {
 	if v == nil {
