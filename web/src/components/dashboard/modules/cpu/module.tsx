@@ -513,134 +513,6 @@ export function CPUModuleView({
         </div>
       </Section>
 
-      <Section title={`CPU ${packageId} Controls`} icon={<Thermometer className="h-4 w-4" />}>
-        <div className="grid gap-3 lg:grid-cols-2">
-          <ControlCard title="Scaling and Governor">
-            <div>
-              <div className="mb-1 text-xs text-[var(--telemetry-muted-fg)]">
-                Scaling Range {formatKHz(cpuRange[0])} ~ {formatKHz(cpuRange[1])}
-              </div>
-              <Slider
-                min={cpuScaleMinBound}
-                max={cpuScaleMaxBound}
-                step={1000}
-                value={cpuRange}
-                onValueChange={(v) => {
-                  const next: [number, number] = [
-                    clamp(v[0] ?? cpuRange[0], cpuScaleMinBound, cpuScaleMaxBound),
-                    clamp(v[1] ?? cpuRange[1], cpuScaleMinBound, cpuScaleMaxBound),
-                  ];
-                  const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
-                  setIsEditingScale(true);
-                  setCpuRange(fixed);
-                  scalingControl.send(fixed);
-                }}
-                onValueCommit={(v) => {
-                  const next: [number, number] = [
-                    clamp(v[0] ?? cpuRange[0], cpuScaleMinBound, cpuScaleMaxBound),
-                    clamp(v[1] ?? cpuRange[1], cpuScaleMinBound, cpuScaleMaxBound),
-                  ];
-                  const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
-                  setCpuRange(fixed);
-                  scalingControl.flush(fixed);
-                  scaleSyncBlockUntilRef.current = Date.now() + 200;
-                  setIsEditingScale(false);
-                }}
-              />
-            </div>
-
-            <div>
-              <div className="mb-1 text-xs text-[var(--telemetry-muted-fg)]">Governor</div>
-              <Select
-                value={cpuGovernor}
-                onValueChange={(value) => {
-                  setCpuGovernor(value);
-                  governorSyncBlockUntilRef.current = Date.now() + 200;
-                  governorControl.flush(value);
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {cpuGovernorOptions.map((g) => (
-                    <SelectItem key={g} value={g}>
-                      {g}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </ControlCard>
-
-          <ControlCard
-            title={showUncore ? "Uncore and RAPL" : "RAPL"}
-            disabledNote={!canControlUncore && showUncore ? "Uncore range control is unavailable on this platform." : undefined}
-          >
-            {showUncore ? (
-              <div>
-                <div className="mb-1 text-xs text-[var(--telemetry-muted-fg)]">
-                  Uncore Range {formatKHz(uncoreRange[0])} ~ {formatKHz(uncoreRange[1])}
-                </div>
-                <Slider
-                  min={maxOr(uncoreMin, 1)}
-                  max={maxOr(uncoreMax, 1)}
-                  step={1000}
-                  value={uncoreRange}
-                  onValueChange={(v) => {
-                    const next: [number, number] = [
-                      clamp(v[0] ?? uncoreRange[0], uncoreMin, uncoreMax),
-                      clamp(v[1] ?? uncoreRange[1], uncoreMin, uncoreMax),
-                    ];
-                    const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
-                    setIsEditingUncore(true);
-                    setUncoreRange(fixed);
-                    if (canControlUncore) uncoreControl.send(fixed);
-                  }}
-                  onValueCommit={(v) => {
-                    const next: [number, number] = [
-                      clamp(v[0] ?? uncoreRange[0], uncoreMin, uncoreMax),
-                      clamp(v[1] ?? uncoreRange[1], uncoreMin, uncoreMax),
-                    ];
-                    const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
-                    setUncoreRange(fixed);
-                    if (canControlUncore) uncoreControl.flush(fixed);
-                    uncoreSyncBlockUntilRef.current = Date.now() + 200;
-                    setIsEditingUncore(false);
-                  }}
-                  disabled={!canControlUncore}
-                />
-              </div>
-            ) : null}
-
-            <div>
-              <div className="mb-1 text-xs text-[var(--telemetry-muted-fg)]">Power Cap {formatPowerMicroW(cpuPowerCap)}</div>
-              <Slider
-                min={cpuPowerSliderMin}
-                max={cpuPowerSliderMax}
-                step={1000}
-                value={[cpuPowerCap]}
-                onValueChange={(v) => {
-                  const next = clamp(v[0] ?? cpuPowerCap, cpuPowerSliderMin, cpuPowerSliderMax);
-                  setIsEditingPowerCap(true);
-                  setCpuPowerCap(next);
-                  powerCapControl.send(next);
-                }}
-                onValueCommit={(v) => {
-                  const next = clamp(v[0] ?? cpuPowerCap, cpuPowerSliderMin, cpuPowerSliderMax);
-                  setCpuPowerCap(next);
-                  powerCapControl.flush(next);
-                  powerCapSyncBlockUntilRef.current = Date.now() + 200;
-                  setIsEditingPowerCap(false);
-                }}
-              />
-            </div>
-          </ControlCard>
-        </div>
-
-        {cmdMsg ? <div className="mt-2 text-xs text-[var(--telemetry-muted-fg)]">{cmdMsg}</div> : null}
-      </Section>
-
       <Section
         title={`CPU ${packageId} Per-Core Runtime`}
         icon={<Cpu className="h-4 w-4" />}
@@ -664,6 +536,127 @@ export function CPUModuleView({
             <div className="text-xs text-[var(--telemetry-muted-fg)]">Per-core runtime table is collapsed.</div>
           )}
         </div>
+      </Section>
+
+      <Section title={`CPU ${packageId} Controls`} icon={<Thermometer className="h-4 w-4" />}>
+
+        <div className="mb-2">
+          <div className="mb-1 text-xs text-[var(--telemetry-muted-fg)]">
+            Core Range {formatKHz(cpuRange[0])} ~ {formatKHz(cpuRange[1])}
+          </div>
+          <Slider
+            min={cpuScaleMinBound}
+            max={cpuScaleMaxBound}
+            step={1000}
+            value={cpuRange}
+            onValueChange={(v) => {
+              const next: [number, number] = [
+                clamp(v[0] ?? cpuRange[0], cpuScaleMinBound, cpuScaleMaxBound),
+                clamp(v[1] ?? cpuRange[1], cpuScaleMinBound, cpuScaleMaxBound),
+              ];
+              const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
+              setIsEditingScale(true);
+              setCpuRange(fixed);
+              scalingControl.send(fixed);
+            }}
+            onValueCommit={(v) => {
+              const next: [number, number] = [
+                clamp(v[0] ?? cpuRange[0], cpuScaleMinBound, cpuScaleMaxBound),
+                clamp(v[1] ?? cpuRange[1], cpuScaleMinBound, cpuScaleMaxBound),
+              ];
+              const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
+              setCpuRange(fixed);
+              scalingControl.flush(fixed);
+              scaleSyncBlockUntilRef.current = Date.now() + 200;
+              setIsEditingScale(false);
+            }}
+          />
+        </div>
+
+
+        {showUncore ? (
+          <div className="mb-2">
+            <div className="mb-1 text-xs text-[var(--telemetry-muted-fg)]">
+              Uncore Range {formatKHz(uncoreRange[0])} ~ {formatKHz(uncoreRange[1])}
+            </div>
+            <Slider
+              min={maxOr(uncoreMin, 1)}
+              max={maxOr(uncoreMax, 1)}
+              step={1000}
+              value={uncoreRange}
+              onValueChange={(v) => {
+                const next: [number, number] = [
+                  clamp(v[0] ?? uncoreRange[0], uncoreMin, uncoreMax),
+                  clamp(v[1] ?? uncoreRange[1], uncoreMin, uncoreMax),
+                ];
+                const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
+                setIsEditingUncore(true);
+                setUncoreRange(fixed);
+                if (canControlUncore) uncoreControl.send(fixed);
+              }}
+              onValueCommit={(v) => {
+                const next: [number, number] = [
+                  clamp(v[0] ?? uncoreRange[0], uncoreMin, uncoreMax),
+                  clamp(v[1] ?? uncoreRange[1], uncoreMin, uncoreMax),
+                ];
+                const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
+                setUncoreRange(fixed);
+                if (canControlUncore) uncoreControl.flush(fixed);
+                uncoreSyncBlockUntilRef.current = Date.now() + 200;
+                setIsEditingUncore(false);
+              }}
+              disabled={!canControlUncore}
+            />
+          </div>
+        ) : null}
+
+        <div className="mb-2">
+          <div className="mb-1 text-xs text-[var(--telemetry-muted-fg)]">Power Cap {formatPowerMicroW(cpuPowerCap)}</div>
+          <Slider
+            min={cpuPowerSliderMin}
+            max={cpuPowerSliderMax}
+            step={1000}
+            value={[cpuPowerCap]}
+            onValueChange={(v) => {
+              const next = clamp(v[0] ?? cpuPowerCap, cpuPowerSliderMin, cpuPowerSliderMax);
+              setIsEditingPowerCap(true);
+              setCpuPowerCap(next);
+              powerCapControl.send(next);
+            }}
+            onValueCommit={(v) => {
+              const next = clamp(v[0] ?? cpuPowerCap, cpuPowerSliderMin, cpuPowerSliderMax);
+              setCpuPowerCap(next);
+              powerCapControl.flush(next);
+              powerCapSyncBlockUntilRef.current = Date.now() + 200;
+              setIsEditingPowerCap(false);
+            }}
+          />
+        </div>
+
+        <div className="mb-2">
+          <div className="mb-1 text-xs text-[var(--telemetry-muted-fg)]">Governor</div>
+          <Select
+            value={cpuGovernor}
+            onValueChange={(value) => {
+              setCpuGovernor(value);
+              governorSyncBlockUntilRef.current = Date.now() + 200;
+              governorControl.flush(value);
+            }}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {cpuGovernorOptions.map((g) => (
+                <SelectItem key={g} value={g}>
+                  {g}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {cmdMsg ? <div className="mt-2 text-xs text-[var(--telemetry-muted-fg)]">{cmdMsg}</div> : null}
       </Section>
 
       <div className="grid gap-3 lg:grid-cols-2">
@@ -703,34 +696,6 @@ export function CPUModuleView({
           yDomain={[0, cpuPowerMaxBound]}
         />
       </div>
-
-      <Section title={`CPU ${packageId} RAPL`} icon={<Thermometer className="h-4 w-4" />}>
-        <div className="grid gap-2 md:grid-cols-2">
-          <StatRow
-            name="Energy"
-            value={`${formatNumber(numField(activeCpuRapl, "energyMicroJ", "energy_micro_j") / 1_000_000)} J`}
-          />
-          <StatRow
-            name="Current Cap"
-            value={formatPowerMicroW(numField(activeCpuRapl, "powerCapMicroW", "power_cap_micro_w"))}
-          />
-          <StatRow
-            name="Cap Range"
-            value={
-              numField(activeCpuControl, "powerCapMinMicroW", "power_cap_min_micro_w") > 0 ||
-              numField(activeCpuControl, "powerCapMaxMicroW", "power_cap_max_micro_w") > 0
-                ? `${formatPowerMicroW(numField(activeCpuControl, "powerCapMinMicroW", "power_cap_min_micro_w"))} ~ ${formatPowerMicroW(numField(activeCpuControl, "powerCapMaxMicroW", "power_cap_max_micro_w"))}`
-                : "-"
-            }
-          />
-          {showUncore ? (
-            <StatRow
-              name="Uncore Range"
-              value={canControlUncore ? `${formatKHz(uncoreMin)} ~ ${formatKHz(uncoreMax)}` : "unsupported"}
-            />
-          ) : null}
-        </div>
-      </Section>
     </>
   );
 }

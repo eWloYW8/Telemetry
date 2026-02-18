@@ -280,106 +280,97 @@ export function GPUModuleView({
       </Section>
 
       <Section title={`GPU ${gpuIndex} Controls`} icon={<Gauge className="h-4 w-4" />}>
-        <div className="grid gap-3 lg:grid-cols-2">
-          <ControlCard
-            title="Clock Range"
-            disabledNote={!gpuCanTuneSM && !gpuCanTuneMem ? "Clock range control unsupported on this GPU." : undefined}
-          >
-            {gpuCanTuneSM ? (
-              <div>
-                <div className="mb-1 text-xs text-[var(--telemetry-muted-fg)]">
-                  SM Clock {formatNumber(gpuSMRange[0])} ~ {formatNumber(gpuSMRange[1])} MHz
-                </div>
-                <Slider
-                  min={gpuSMMinBound}
-                  max={gpuSMMaxBound}
-                  step={1}
-                  value={gpuSMRange}
-                  onValueChange={(v) => {
-                    const next: [number, number] = [
-                      clamp(v[0] ?? gpuSMRange[0], gpuSMMinBound, gpuSMMaxBound),
-                      clamp(v[1] ?? gpuSMRange[1], gpuSMMinBound, gpuSMMaxBound),
-                    ];
-                    const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
-                    setIsEditingClock(true);
-                    setGpuSMRange(fixed);
-                    clockControl.send({ sm: fixed, mem: gpuMemRange });
-                  }}
-                  onValueCommit={(v) => {
-                    const next: [number, number] = [
-                      clamp(v[0] ?? gpuSMRange[0], gpuSMMinBound, gpuSMMaxBound),
-                      clamp(v[1] ?? gpuSMRange[1], gpuSMMinBound, gpuSMMaxBound),
-                    ];
-                    const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
-                    setGpuSMRange(fixed);
-                    clockControl.flush({ sm: fixed, mem: gpuMemRange });
-                    clockSyncBlockUntilRef.current = Date.now() + 200;
-                    setIsEditingClock(false);
-                  }}
-                />
-              </div>
-            ) : null}
-
-            {gpuCanTuneMem ? (
-              <div>
-                <div className="mb-1 text-xs text-[var(--telemetry-muted-fg)]">
-                  Memory Clock {formatNumber(gpuMemRange[0])} ~ {formatNumber(gpuMemRange[1])} MHz
-                </div>
-                <Slider
-                  min={gpuMemMinBound}
-                  max={gpuMemMaxBound}
-                  step={1}
-                  value={gpuMemRange}
-                  onValueChange={(v) => {
-                    const next: [number, number] = [
-                      clamp(v[0] ?? gpuMemRange[0], gpuMemMinBound, gpuMemMaxBound),
-                      clamp(v[1] ?? gpuMemRange[1], gpuMemMinBound, gpuMemMaxBound),
-                    ];
-                    const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
-                    setIsEditingClock(true);
-                    setGpuMemRange(fixed);
-                    clockControl.send({ sm: gpuSMRange, mem: fixed });
-                  }}
-                  onValueCommit={(v) => {
-                    const next: [number, number] = [
-                      clamp(v[0] ?? gpuMemRange[0], gpuMemMinBound, gpuMemMaxBound),
-                      clamp(v[1] ?? gpuMemRange[1], gpuMemMinBound, gpuMemMaxBound),
-                    ];
-                    const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
-                    setGpuMemRange(fixed);
-                    clockControl.flush({ sm: gpuSMRange, mem: fixed });
-                    clockSyncBlockUntilRef.current = Date.now() + 200;
-                    setIsEditingClock(false);
-                  }}
-                />
-              </div>
-            ) : null}
-          </ControlCard>
-
-          <ControlCard title="Power Cap">
-            <div>
-              <div className="mb-1 text-xs text-[var(--telemetry-muted-fg)]">Power Cap {formatPowerMilliW(gpuPowerCap)}</div>
-              <Slider
-                min={gpuPowerMinBound}
-                max={gpuPowerMaxBound}
-                step={1}
-                value={[gpuPowerCap]}
-                onValueChange={(v) => {
-                  const next = clamp(v[0] ?? gpuPowerCap, gpuPowerMinBound, gpuPowerMaxBound);
-                  setIsEditingPowerCap(true);
-                  setGpuPowerCap(next);
-                  powerCapControl.send(next);
-                }}
-                onValueCommit={(v) => {
-                  const next = clamp(v[0] ?? gpuPowerCap, gpuPowerMinBound, gpuPowerMaxBound);
-                  setGpuPowerCap(next);
-                  powerCapControl.flush(next);
-                  powerCapSyncBlockUntilRef.current = Date.now() + 200;
-                  setIsEditingPowerCap(false);
-                }}
-              />
+        {gpuCanTuneSM ? (
+          <div className="mb-2">
+            <div className="mb-1 text-xs text-[var(--telemetry-muted-fg)]">
+              SM Clock {formatNumber(gpuSMRange[0])} ~ {formatNumber(gpuSMRange[1])} MHz
             </div>
-          </ControlCard>
+            <Slider
+              min={gpuSMMinBound}
+              max={gpuSMMaxBound}
+              step={1}
+              value={gpuSMRange}
+              onValueChange={(v) => {
+                const next: [number, number] = [
+                  clamp(v[0] ?? gpuSMRange[0], gpuSMMinBound, gpuSMMaxBound),
+                  clamp(v[1] ?? gpuSMRange[1], gpuSMMinBound, gpuSMMaxBound),
+                ];
+                const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
+                setIsEditingClock(true);
+                setGpuSMRange(fixed);
+                clockControl.send({ sm: fixed, mem: gpuMemRange });
+              }}
+              onValueCommit={(v) => {
+                const next: [number, number] = [
+                  clamp(v[0] ?? gpuSMRange[0], gpuSMMinBound, gpuSMMaxBound),
+                  clamp(v[1] ?? gpuSMRange[1], gpuSMMinBound, gpuSMMaxBound),
+                ];
+                const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
+                setGpuSMRange(fixed);
+                clockControl.flush({ sm: fixed, mem: gpuMemRange });
+                clockSyncBlockUntilRef.current = Date.now() + 200;
+                setIsEditingClock(false);
+              }}
+            />
+          </div>
+        ) : null}
+
+        {gpuCanTuneMem ? (
+          <div className="mb-2">
+            <div className="mb-1 text-xs text-[var(--telemetry-muted-fg)]">
+              Memory Clock {formatNumber(gpuMemRange[0])} ~ {formatNumber(gpuMemRange[1])} MHz
+            </div>
+            <Slider
+              min={gpuMemMinBound}
+              max={gpuMemMaxBound}
+              step={1}
+              value={gpuMemRange}
+              onValueChange={(v) => {
+                const next: [number, number] = [
+                  clamp(v[0] ?? gpuMemRange[0], gpuMemMinBound, gpuMemMaxBound),
+                  clamp(v[1] ?? gpuMemRange[1], gpuMemMinBound, gpuMemMaxBound),
+                ];
+                const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
+                setIsEditingClock(true);
+                setGpuMemRange(fixed);
+                clockControl.send({ sm: gpuSMRange, mem: fixed });
+              }}
+              onValueCommit={(v) => {
+                const next: [number, number] = [
+                  clamp(v[0] ?? gpuMemRange[0], gpuMemMinBound, gpuMemMaxBound),
+                  clamp(v[1] ?? gpuMemRange[1], gpuMemMinBound, gpuMemMaxBound),
+                ];
+                const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
+                setGpuMemRange(fixed);
+                clockControl.flush({ sm: gpuSMRange, mem: fixed });
+                clockSyncBlockUntilRef.current = Date.now() + 200;
+                setIsEditingClock(false);
+              }}
+            />
+          </div>
+        ) : null}
+
+        <div className="mb-2">
+          <div className="mb-1 text-xs text-[var(--telemetry-muted-fg)]">Power Cap {formatPowerMilliW(gpuPowerCap)}</div>
+          <Slider
+            min={gpuPowerMinBound}
+            max={gpuPowerMaxBound}
+            step={1}
+            value={[gpuPowerCap]}
+            onValueChange={(v) => {
+              const next = clamp(v[0] ?? gpuPowerCap, gpuPowerMinBound, gpuPowerMaxBound);
+              setIsEditingPowerCap(true);
+              setGpuPowerCap(next);
+              powerCapControl.send(next);
+            }}
+            onValueCommit={(v) => {
+              const next = clamp(v[0] ?? gpuPowerCap, gpuPowerMinBound, gpuPowerMaxBound);
+              setGpuPowerCap(next);
+              powerCapControl.flush(next);
+              powerCapSyncBlockUntilRef.current = Date.now() + 200;
+              setIsEditingPowerCap(false);
+            }}
+          />
         </div>
 
         {cmdMsg ? <div className="mt-2 text-xs text-[var(--telemetry-muted-fg)]">{cmdMsg}</div> : null}
