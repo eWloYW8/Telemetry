@@ -10,11 +10,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Slider } from "@/components/ui/slider";
 
 import { MetricChart } from "../../components/charts/metric-chart";
 import { CpuCoreDenseTable } from "../../components/cpu/core-dense-table";
-import { ControlCard } from "../../components/ui/control-card";
+import { RichControlSlider } from "../../components/ui/rich-control-slider";
 import type { CpuCoreDenseRow, RawHistorySample } from "../../types";
 import { deltaRate, maxOr } from "../../utils/rates";
 import { nsToTimeLabel } from "../../utils/time";
@@ -33,6 +32,37 @@ type CPUModuleViewProps = {
   cmdMsg: string;
   sendCommand: (commandType: string, payload: Record<string, unknown>) => void;
 };
+
+function packageRealtimePowerMicroW(
+  prevSample: RawHistorySample,
+  curSample: RawHistorySample,
+  packageId: number,
+): number {
+  const prevRapl =
+    ((prevSample.sample.cpuUltraMetrics ?? prevSample.sample.cpu_ultra_metrics ?? {}).rapl ?? []) as Array<
+      Record<string, any>
+    >;
+  const curRapl =
+    ((curSample.sample.cpuUltraMetrics ?? curSample.sample.cpu_ultra_metrics ?? {}).rapl ?? []) as Array<
+      Record<string, any>
+    >;
+
+  const prevByPkg = new Map<number, Record<string, any>>();
+  for (const p of prevRapl) {
+    prevByPkg.set(numField(p, "packageId", "package_id"), p);
+  }
+
+  const curPkg = curRapl.find((c) => numField(c, "packageId", "package_id") === packageId);
+  const prevPkg = curPkg ? prevByPkg.get(packageId) : null;
+  if (!curPkg || !prevPkg) return 0;
+
+  const curEnergy = numField(curPkg, "energyMicroJ", "energy_micro_j");
+  const prevEnergy = numField(prevPkg, "energyMicroJ", "energy_micro_j");
+  const curTs = sampledAtNs(curPkg, curSample.atNs);
+  const prevTs = sampledAtNs(prevPkg, prevSample.atNs);
+  const rate = deltaRate(curEnergy, prevEnergy, curTs, prevTs);
+  return rate ?? 0;
+}
 
 export function cpuPackageIDsFromRegistration(registration: Record<string, any> | null): number[] {
   const cpuMeta = moduleMeta(registration, "cpu");
@@ -155,6 +185,12 @@ export function CPUModuleView({
     if (cpuPowerMin > 0 && cpuPowerMin <= cpuPowerSliderMax) return cpuPowerMin;
     return Math.min(1_000_000, cpuPowerSliderMax);
   }, [cpuPowerMin, cpuPowerSliderMax]);
+  const cpuCurrentCoreKhz = useMemo(() => {
+    const perPkg = cpuCores.filter((core) => numField(core, "packageId", "package_id") === packageId);
+    if (perPkg.length === 0) return 0;
+    return perPkg.reduce((acc, core) => acc + numField(core, "scalingCurKhz", "scaling_cur_khz"), 0) / perPkg.length;
+  }, [cpuCores, packageId]);
+  const cpuCurrentUncoreKhz = numField(activeUncoreMetric, "currentKhz", "current_khz");
 
   const scalingControl = useThrottledEmitter<[number, number]>((next) => {
     sendCommand("cpu_scaling_range", {
@@ -162,7 +198,7 @@ export function CPUModuleView({
       minKhz: Math.round(next[0]),
       maxKhz: Math.round(next[1]),
     });
-  }, 100);
+  }, 20);
 
   const uncoreControl = useThrottledEmitter<[number, number]>((next) => {
     sendCommand("cpu_uncore_range", {
@@ -170,14 +206,14 @@ export function CPUModuleView({
       minKhz: Math.round(next[0]),
       maxKhz: Math.round(next[1]),
     });
-  }, 100);
+  }, 20);
 
   const powerCapControl = useThrottledEmitter<number>((value) => {
     sendCommand("cpu_power_cap", {
       packageId,
       microwatt: Math.round(clamp(value, cpuPowerSliderMin, cpuPowerSliderMax)),
     });
-  }, 100);
+  }, 20);
 
   const governorControl = useThrottledEmitter<string>((value) => {
     sendCommand("cpu_governor", {
@@ -372,35 +408,19 @@ export function CPUModuleView({
     for (let i = 1; i < list.length; i += 1) {
       const prev = list[i - 1];
       const cur = list[i];
-      const prevRapl =
-        ((prev.sample.cpuUltraMetrics ?? prev.sample.cpu_ultra_metrics ?? {}).rapl ?? []) as Array<
-          Record<string, any>
-        >;
-      const curRapl =
-        ((cur.sample.cpuUltraMetrics ?? cur.sample.cpu_ultra_metrics ?? {}).rapl ?? []) as Array<
-          Record<string, any>
-        >;
-
-      const prevByPkg = new Map<number, Record<string, any>>();
-      for (const p of prevRapl) {
-        prevByPkg.set(numField(p, "packageId", "package_id"), p);
-      }
-
-      const curPkg = curRapl.find((c) => numField(c, "packageId", "package_id") === packageId);
-      const prevPkg = curPkg ? prevByPkg.get(packageId) : null;
-      let powerW = 0;
-      if (curPkg && prevPkg) {
-        const curEnergy = numField(curPkg, "energyMicroJ", "energy_micro_j");
-        const prevEnergy = numField(prevPkg, "energyMicroJ", "energy_micro_j");
-        const curTs = sampledAtNs(curPkg, cur.atNs);
-        const prevTs = sampledAtNs(prevPkg, prev.atNs);
-        const rate = deltaRate(curEnergy, prevEnergy, curTs, prevTs);
-        if (rate !== null) powerW = rate / 1_000_000;
-      }
-
+      const powerW = packageRealtimePowerMicroW(prev, cur, packageId) / 1_000_000;
       rows.push({ tsNs: cur.atNs.toString(), time: nsToTimeLabel(cur.atNs), powerW });
     }
     return rows;
+  }, [historyByCategory.cpu_ultra_fast, packageId]);
+
+  const cpuRealtimePowerMicroW = useMemo(() => {
+    const list = historyByCategory.cpu_ultra_fast ?? [];
+    for (let i = list.length - 1; i >= 1; i -= 1) {
+      const value = packageRealtimePowerMicroW(list[i - 1], list[i], packageId);
+      if (value > 0) return value;
+    }
+    return 0;
   }, [historyByCategory.cpu_ultra_fast, packageId]);
 
   const cpuUncoreSeries = useMemo(() => {
@@ -533,22 +553,49 @@ export function CPUModuleView({
           {showPerCoreRuntime ? (
             <CpuCoreDenseTable rows={cpuCoreRows} />
           ) : (
-            <div className="text-xs text-[var(--telemetry-muted-fg)]">Per-core runtime table is collapsed.</div>
+            <div className="flex flex-wrap items-start gap-x-1.5 gap-y-2">
+              {cpuCoreRows.length > 0 ? (
+                cpuCoreRows.map((row) => {
+                  const util = clamp(numField(row, "utilPct"), 0, 100);
+                  const hue = Math.round(120 - (util / 100) * 120);
+                  return (
+                    <div key={`${row.packageId}-${row.coreId}`} className="flex w-11 flex-col items-center">
+                      <div
+                        className="flex h-8 w-8 items-center justify-center rounded-[4px] border border-black/15 text-[10px] font-semibold leading-none text-white shadow-sm"
+                        style={{ backgroundColor: `hsl(${hue} 78% 40%)` }}
+                        title={`Core ${row.coreId}: ${formatNumber(util, 1)}%`}
+                      >
+                        {formatNumber(util, 0)}%
+                      </div>
+                      <div className="mt-0.5 text-[10px] leading-none text-[var(--telemetry-muted-fg)]">
+                        Core {row.coreId}
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="text-xs text-[var(--telemetry-muted-fg)]">No core runtime data.</div>
+              )}
+            </div>
           )}
         </div>
       </Section>
 
       <Section title={`CPU ${packageId} Controls`} icon={<Thermometer className="h-4 w-4" />}>
 
-        <div className="mb-2">
-          <div className="mb-1 text-xs text-[var(--telemetry-muted-fg)]">
+        <div className="mb-1.5">
+          <div className="mb-0.5 text-sm text-[var(--telemetry-muted-fg)]">
             Core Range {formatKHz(cpuRange[0])} ~ {formatKHz(cpuRange[1])}
           </div>
-          <Slider
+          <RichControlSlider
             min={cpuScaleMinBound}
             max={cpuScaleMaxBound}
             step={1000}
             value={cpuRange}
+            currentValue={cpuCurrentCoreKhz > 0 ? cpuCurrentCoreKhz : null}
+            valueFormatter={(value) => formatKHz(value)}
+            tickFormatter={(value) => formatNumber(value / 1000, 0)}
+            majorTickStep={100_000}
             onValueChange={(v) => {
               const next: [number, number] = [
                 clamp(v[0] ?? cpuRange[0], cpuScaleMinBound, cpuScaleMaxBound),
@@ -575,15 +622,19 @@ export function CPUModuleView({
 
 
         {showUncore ? (
-          <div className="mb-2">
-            <div className="mb-1 text-xs text-[var(--telemetry-muted-fg)]">
+          <div className="mb-1.5">
+            <div className="mb-0.5 text-sm text-[var(--telemetry-muted-fg)]">
               Uncore Range {formatKHz(uncoreRange[0])} ~ {formatKHz(uncoreRange[1])}
             </div>
-            <Slider
+            <RichControlSlider
               min={maxOr(uncoreMin, 1)}
               max={maxOr(uncoreMax, 1)}
               step={1000}
               value={uncoreRange}
+              currentValue={cpuCurrentUncoreKhz > 0 ? cpuCurrentUncoreKhz : null}
+              valueFormatter={(value) => formatKHz(value)}
+              tickFormatter={(value) => formatNumber(value / 1000, 0)}
+              majorTickStep={100_000}
               onValueChange={(v) => {
                 const next: [number, number] = [
                   clamp(v[0] ?? uncoreRange[0], uncoreMin, uncoreMax),
@@ -610,13 +661,16 @@ export function CPUModuleView({
           </div>
         ) : null}
 
-        <div className="mb-2">
-          <div className="mb-1 text-xs text-[var(--telemetry-muted-fg)]">Power Cap {formatPowerMicroW(cpuPowerCap)}</div>
-          <Slider
+        <div className="mb-1.5">
+          <div className="mb-0.5 text-sm text-[var(--telemetry-muted-fg)]">Power Cap {formatPowerMicroW(cpuPowerCap)}</div>
+          <RichControlSlider
             min={cpuPowerSliderMin}
             max={cpuPowerSliderMax}
             step={1000}
             value={[cpuPowerCap]}
+            currentValue={cpuRealtimePowerMicroW > 0 ? cpuRealtimePowerMicroW : null}
+            valueFormatter={(value) => formatPowerMicroW(value)}
+            tickFormatter={(value) => formatNumber(value / 1_000_000, 0)}
             onValueChange={(v) => {
               const next = clamp(v[0] ?? cpuPowerCap, cpuPowerSliderMin, cpuPowerSliderMax);
               setIsEditingPowerCap(true);
@@ -633,8 +687,8 @@ export function CPUModuleView({
           />
         </div>
 
-        <div className="mb-2">
-          <div className="mb-1 text-xs text-[var(--telemetry-muted-fg)]">Governor</div>
+        <div className="mb-1.5">
+          <div className="mb-0.5 text-sm text-[var(--telemetry-muted-fg)]">Governor</div>
           <Select
             value={cpuGovernor}
             onValueChange={(value) => {
@@ -656,7 +710,6 @@ export function CPUModuleView({
           </Select>
         </div>
 
-        {cmdMsg ? <div className="mt-2 text-xs text-[var(--telemetry-muted-fg)]">{cmdMsg}</div> : null}
       </Section>
 
       <div className="grid gap-3 lg:grid-cols-2">

@@ -3,10 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Gauge } from "lucide-react";
 
-import { Slider } from "@/components/ui/slider";
-
 import { MetricChart } from "../../components/charts/metric-chart";
-import { ControlCard } from "../../components/ui/control-card";
+import { RichControlSlider } from "../../components/ui/rich-control-slider";
 import type { RawHistorySample } from "../../types";
 import { maxOr } from "../../utils/rates";
 import { nsToTimeLabel } from "../../utils/time";
@@ -78,8 +76,11 @@ export function GPUModuleView({
     "smClockMaxMhz",
     "sm_clock_max_mhz",
   );
+  const gpuCurrentSMClock = numField(activeGPUFast, "graphicsClockMhz", "graphics_clock_mhz");
   const gpuCurrentMemMin = numField(activeGPUFast, "memClockMinMhz", "mem_clock_min_mhz");
   const gpuCurrentMemMax = numField(activeGPUFast, "memClockMaxMhz", "mem_clock_max_mhz");
+  const gpuCurrentMemClock = numField(activeGPUFast, "memoryClockMhz", "memory_clock_mhz");
+  const gpuCurrentPowerUsage = numField(activeGPUFast, "powerUsageMilliwatt", "power_usage_milliwatt");
   const gpuSMMinBound = maxOr(gpuSMMinRaw, 1);
   const gpuSMMaxBound = maxOr(gpuSMMaxRaw, gpuSMMinBound);
   const gpuMemMinBound = maxOr(gpuMemMinRaw, 1);
@@ -115,14 +116,14 @@ export function GPUModuleView({
       memMinMhz: gpuCanTuneMem ? Math.round(range.mem[0]) : 0,
       memMaxMhz: gpuCanTuneMem ? Math.round(range.mem[1]) : 0,
     });
-  }, 100);
+  }, 20);
 
   const powerCapControl = useThrottledEmitter<number>((value) => {
     sendCommand("gpu_power_cap", {
       gpuIndex,
       milliwatt: Math.round(clamp(value, gpuPowerMinBound, gpuPowerMaxBound)),
     });
-  }, 100);
+  }, 20);
 
   useEffect(() => {
     if (isEditingClock) return;
@@ -281,15 +282,18 @@ export function GPUModuleView({
 
       <Section title={`GPU ${gpuIndex} Controls`} icon={<Gauge className="h-4 w-4" />}>
         {gpuCanTuneSM ? (
-          <div className="mb-2">
-            <div className="mb-1 text-xs text-[var(--telemetry-muted-fg)]">
+          <div className="mb-1.5">
+            <div className="mb-0.5 text-sm text-[var(--telemetry-muted-fg)]">
               SM Clock {formatNumber(gpuSMRange[0])} ~ {formatNumber(gpuSMRange[1])} MHz
             </div>
-            <Slider
+            <RichControlSlider
               min={gpuSMMinBound}
               max={gpuSMMaxBound}
               step={1}
               value={gpuSMRange}
+              currentValue={gpuCurrentSMClock > 0 ? gpuCurrentSMClock : null}
+              valueFormatter={(value) => `${formatNumber(value)} MHz`}
+              tickFormatter={(value) => formatNumber(value, 0)}
               onValueChange={(v) => {
                 const next: [number, number] = [
                   clamp(v[0] ?? gpuSMRange[0], gpuSMMinBound, gpuSMMaxBound),
@@ -316,15 +320,18 @@ export function GPUModuleView({
         ) : null}
 
         {gpuCanTuneMem ? (
-          <div className="mb-2">
-            <div className="mb-1 text-xs text-[var(--telemetry-muted-fg)]">
+          <div className="mb-1.5">
+            <div className="mb-0.5 text-sm text-[var(--telemetry-muted-fg)]">
               Memory Clock {formatNumber(gpuMemRange[0])} ~ {formatNumber(gpuMemRange[1])} MHz
             </div>
-            <Slider
+            <RichControlSlider
               min={gpuMemMinBound}
               max={gpuMemMaxBound}
               step={1}
               value={gpuMemRange}
+              currentValue={gpuCurrentMemClock > 0 ? gpuCurrentMemClock : null}
+              valueFormatter={(value) => `${formatNumber(value)} MHz`}
+              tickFormatter={(value) => formatNumber(value, 0)}
               onValueChange={(v) => {
                 const next: [number, number] = [
                   clamp(v[0] ?? gpuMemRange[0], gpuMemMinBound, gpuMemMaxBound),
@@ -350,13 +357,16 @@ export function GPUModuleView({
           </div>
         ) : null}
 
-        <div className="mb-2">
-          <div className="mb-1 text-xs text-[var(--telemetry-muted-fg)]">Power Cap {formatPowerMilliW(gpuPowerCap)}</div>
-          <Slider
+        <div className="mb-1.5">
+          <div className="mb-0.5 text-sm text-[var(--telemetry-muted-fg)]">Power Cap {formatPowerMilliW(gpuPowerCap)}</div>
+          <RichControlSlider
             min={gpuPowerMinBound}
             max={gpuPowerMaxBound}
             step={1}
             value={[gpuPowerCap]}
+            currentValue={gpuCurrentPowerUsage > 0 ? gpuCurrentPowerUsage : null}
+            valueFormatter={(value) => formatPowerMilliW(value)}
+            tickFormatter={(value) => formatNumber(value / 1000, 0)}
             onValueChange={(v) => {
               const next = clamp(v[0] ?? gpuPowerCap, gpuPowerMinBound, gpuPowerMaxBound);
               setIsEditingPowerCap(true);
@@ -373,7 +383,6 @@ export function GPUModuleView({
           />
         </div>
 
-        {cmdMsg ? <div className="mt-2 text-xs text-[var(--telemetry-muted-fg)]">{cmdMsg}</div> : null}
       </Section>
 
       <div className="grid gap-3 lg:grid-cols-2">
