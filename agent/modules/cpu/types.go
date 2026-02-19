@@ -14,6 +14,13 @@ const (
 	CommandSetPowerCap     api.CommandType = "cpu_power_cap"
 )
 
+type PowerCapDomain string
+
+const (
+	PowerCapDomainPackage PowerCapDomain = "package"
+	PowerCapDomainDRAM    PowerCapDomain = "dram"
+)
+
 type StaticInfo struct {
 	Vendor              string
 	Model               string
@@ -54,20 +61,23 @@ type DeviceInfo struct {
 }
 
 type PackageControlInfo struct {
-	PackageID          int
-	ScalingMinKHz      uint64
-	ScalingMaxKHz      uint64
-	ScalingHWMinKHz    uint64
-	ScalingHWMaxKHz    uint64
-	AvailableGovernors []string
-	CurrentGovernor    string
-	ScalingDriver      string
-	UncoreCurrentKHz   uint64
-	UncoreMinKHz       uint64
-	UncoreMaxKHz       uint64
-	PowerCapMicroW     uint64
-	PowerCapMinMicroW  uint64
-	PowerCapMaxMicroW  uint64
+	PackageID             int
+	ScalingMinKHz         uint64
+	ScalingMaxKHz         uint64
+	ScalingHWMinKHz       uint64
+	ScalingHWMaxKHz       uint64
+	AvailableGovernors    []string
+	CurrentGovernor       string
+	ScalingDriver         string
+	UncoreCurrentKHz      uint64
+	UncoreMinKHz          uint64
+	UncoreMaxKHz          uint64
+	PowerCapMicroW        uint64
+	PowerCapMinMicroW     uint64
+	PowerCapMaxMicroW     uint64
+	DramPowerCapMicroW    uint64
+	DramPowerCapMinMicroW uint64
+	DramPowerCapMaxMicroW uint64
 }
 
 type CoreFastMetrics struct {
@@ -79,10 +89,12 @@ type CoreFastMetrics struct {
 }
 
 type PackageRAPL struct {
-	PackageID      int
-	EnergyMicroJ   uint64
-	PowerCapMicroW uint64
-	SampledAtNano  int64
+	PackageID          int
+	EnergyMicroJ       uint64
+	PowerCapMicroW     uint64
+	DramEnergyMicroJ   uint64
+	DramPowerCapMicroW uint64
+	SampledAtNano      int64
 }
 
 type PackageTemperature struct {
@@ -143,4 +155,5 @@ type UncoreRangeCommand struct {
 type PowerCapCommand struct {
 	PackageID int
 	MicroWatt uint64
+	Domain    string
 }

@@ -49,20 +49,23 @@ func toPBModuleRegistration(v *Registration) *cpupb.ModuleRegistration {
 	}
 	for _, c := range v.Controls {
 		out.PackageControls = append(out.PackageControls, &cpupb.PackageControl{
-			PackageId:          int32(c.PackageID),
-			ScalingMinKhz:      c.ScalingMinKHz,
-			ScalingMaxKhz:      c.ScalingMaxKHz,
-			ScalingHwMinKhz:    c.ScalingHWMinKHz,
-			ScalingHwMaxKhz:    c.ScalingHWMaxKHz,
-			AvailableGovernors: append([]string(nil), c.AvailableGovernors...),
-			CurrentGovernor:    c.CurrentGovernor,
-			ScalingDriver:      c.ScalingDriver,
-			UncoreCurrentKhz:   c.UncoreCurrentKHz,
-			UncoreMinKhz:       c.UncoreMinKHz,
-			UncoreMaxKhz:       c.UncoreMaxKHz,
-			PowerCapMicroW:     c.PowerCapMicroW,
-			PowerCapMinMicroW:  c.PowerCapMinMicroW,
-			PowerCapMaxMicroW:  c.PowerCapMaxMicroW,
+			PackageId:             int32(c.PackageID),
+			ScalingMinKhz:         c.ScalingMinKHz,
+			ScalingMaxKhz:         c.ScalingMaxKHz,
+			ScalingHwMinKhz:       c.ScalingHWMinKHz,
+			ScalingHwMaxKhz:       c.ScalingHWMaxKHz,
+			AvailableGovernors:    append([]string(nil), c.AvailableGovernors...),
+			CurrentGovernor:       c.CurrentGovernor,
+			ScalingDriver:         c.ScalingDriver,
+			UncoreCurrentKhz:      c.UncoreCurrentKHz,
+			UncoreMinKhz:          c.UncoreMinKHz,
+			UncoreMaxKhz:          c.UncoreMaxKHz,
+			PowerCapMicroW:        c.PowerCapMicroW,
+			PowerCapMinMicroW:     c.PowerCapMinMicroW,
+			PowerCapMaxMicroW:     c.PowerCapMaxMicroW,
+			DramPowerCapMicroW:    c.DramPowerCapMicroW,
+			DramPowerCapMinMicroW: c.DramPowerCapMinMicroW,
+			DramPowerCapMaxMicroW: c.DramPowerCapMaxMicroW,
 		})
 	}
 	return out
@@ -118,10 +121,12 @@ func toPBUltraMetrics(v *UltraMetrics) *cpupb.UltraMetrics {
 	}
 	for _, r := range v.RAPL {
 		out.Rapl = append(out.Rapl, &cpupb.PackageRAPL{
-			PackageId:         int32(r.PackageID),
-			EnergyMicroJ:      r.EnergyMicroJ,
-			PowerCapMicroW:    r.PowerCapMicroW,
-			SampledAtUnixNano: r.SampledAtNano,
+			PackageId:          int32(r.PackageID),
+			EnergyMicroJ:       r.EnergyMicroJ,
+			PowerCapMicroW:     r.PowerCapMicroW,
+			DramEnergyMicroJ:   r.DramEnergyMicroJ,
+			DramPowerCapMicroW: r.DramPowerCapMicroW,
+			SampledAtUnixNano:  r.SampledAtNano,
 		})
 	}
 	for _, u := range v.Uncore {

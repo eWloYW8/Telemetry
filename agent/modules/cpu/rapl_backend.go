@@ -14,16 +14,19 @@ import (
 
 type raplBackend interface {
 	ReadAll() []PackageRAPL
-	SetPowerCap(pkgID int, microWatt uint64) error
+	SetPowerCap(pkgID int, microWatt uint64, domain PowerCapDomain) error
 	ReadControlRanges() []PackagePowerCapRange
 	ReadTemperatures() []PackageTemperature
 }
 
 type PackagePowerCapRange struct {
-	PackageID     int
-	CurrentMicroW uint64
-	MinMicroWatt  uint64
-	MaxMicroWatt  uint64
+	PackageID         int
+	CurrentMicroW     uint64
+	MinMicroWatt      uint64
+	MaxMicroWatt      uint64
+	DramCurrentMicroW uint64
+	DramMinMicroWatt  uint64
+	DramMaxMicroWatt  uint64
 }
 
 func newRAPLBackend(static StaticInfo, mappings []CoreMapping) raplBackend {
@@ -72,18 +75,28 @@ func (b *intelRAPLBackend) ReadAll() []PackageRAPL {
 			continue
 		}
 		capVal, _ := readUint(zone.powerCapPath)
+		dramEnergy := uint64(0)
+		if zone.dramEnergyPath != "" {
+			dramEnergy, _ = readUint(zone.dramEnergyPath)
+		}
+		dramCap := uint64(0)
+		if zone.dramPowerCapPath != "" {
+			dramCap, _ = readUint(zone.dramPowerCapPath)
+		}
 		sampledAt := time.Now().UnixNano()
 		out = append(out, PackageRAPL{
-			PackageID:      pkgID,
-			EnergyMicroJ:   energy,
-			PowerCapMicroW: capVal,
-			SampledAtNano:  sampledAt,
+			PackageID:          pkgID,
+			EnergyMicroJ:       energy,
+			PowerCapMicroW:     capVal,
+			DramEnergyMicroJ:   dramEnergy,
+			DramPowerCapMicroW: dramCap,
+			SampledAtNano:      sampledAt,
 		})
 	}
 	return out
 }
 
-func (b *intelRAPLBackend) SetPowerCap(pkgID int, microWatt uint64) error {
+func (b *intelRAPLBackend) SetPowerCap(pkgID int, microWatt uint64, domain PowerCapDomain) error {
 	if b == nil {
 		return fmt.Errorf("intel rapl backend is unavailable")
 	}
@@ -91,8 +104,17 @@ func (b *intelRAPLBackend) SetPowerCap(pkgID int, microWatt uint64) error {
 	if !ok {
 		return fmt.Errorf("power cap control is unavailable for package %d", pkgID)
 	}
-	if err := os.WriteFile(zone.powerCapPath, []byte(strconv.FormatUint(microWatt, 10)), 0o644); err != nil {
-		return fmt.Errorf("set package %d power cap: %w", pkgID, err)
+	targetPath := zone.powerCapPath
+	domainLabel := string(PowerCapDomainPackage)
+	if domain == PowerCapDomainDRAM {
+		if zone.dramPowerCapPath == "" {
+			return fmt.Errorf("dram power cap control is unavailable for package %d", pkgID)
+		}
+		targetPath = zone.dramPowerCapPath
+		domainLabel = string(PowerCapDomainDRAM)
+	}
+	if err := os.WriteFile(targetPath, []byte(strconv.FormatUint(microWatt, 10)), 0o644); err != nil {
+		return fmt.Errorf("set package %d %s power cap: %w", pkgID, domainLabel, err)
 	}
 	return nil
 }
@@ -112,10 +134,18 @@ func (b *intelRAPLBackend) ReadControlRanges() []PackagePowerCapRange {
 		zone := b.zones[pkgID]
 		current, _ := readUint(zone.powerCapPath)
 		maxCap, _ := readUint(zone.maxPowerPath)
+		dramCurrent := uint64(0)
+		dramMaxCap := uint64(0)
+		if zone.dramPowerCapPath != "" {
+			dramCurrent, _ = readUint(zone.dramPowerCapPath)
+			dramMaxCap, _ = readUint(zone.dramMaxPowerPath)
+		}
 		out = append(out, PackagePowerCapRange{
-			PackageID:     pkgID,
-			CurrentMicroW: current,
-			MaxMicroWatt:  maxCap,
+			PackageID:         pkgID,
+			CurrentMicroW:     current,
+			MaxMicroWatt:      maxCap,
+			DramCurrentMicroW: dramCurrent,
+			DramMaxMicroWatt:  dramMaxCap,
 		})
 	}
 	return out
@@ -232,9 +262,12 @@ func (b *amdRAPLBackend) ReadAll() []PackageRAPL {
 	return out
 }
 
-func (b *amdRAPLBackend) SetPowerCap(pkgID int, microWatt uint64) error {
+func (b *amdRAPLBackend) SetPowerCap(pkgID int, microWatt uint64, domain PowerCapDomain) error {
 	if b == nil || b.client == nil {
 		return fmt.Errorf("amd rapl backend is unavailable")
+	}
+	if domain == PowerCapDomainDRAM {
+		return fmt.Errorf("dram power cap control is unavailable for package %d", pkgID)
 	}
 	socketID, ok := b.socketByPkgID[pkgID]
 	if !ok {

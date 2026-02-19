@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 type Controller struct {
@@ -93,7 +94,7 @@ func (c *Controller) SetUncoreRange(pkgID int, minKHz, maxKHz uint64) error {
 	return nil
 }
 
-func (c *Controller) SetPowerCap(pkgID int, microWatt uint64) error {
+func (c *Controller) SetPowerCap(pkgID int, microWatt uint64, domainRaw string) error {
 	if c == nil || c.collector == nil {
 		return fmt.Errorf("cpu controller is unavailable")
 	}
@@ -103,5 +104,21 @@ func (c *Controller) SetPowerCap(pkgID int, microWatt uint64) error {
 	if c.collector.raplBackend == nil {
 		return fmt.Errorf("power cap control is unavailable for package %d", pkgID)
 	}
-	return c.collector.raplBackend.SetPowerCap(pkgID, microWatt)
+	domain, err := normalizePowerCapDomain(domainRaw)
+	if err != nil {
+		return err
+	}
+	return c.collector.raplBackend.SetPowerCap(pkgID, microWatt, domain)
+}
+
+func normalizePowerCapDomain(raw string) (PowerCapDomain, error) {
+	domain := strings.ToLower(strings.TrimSpace(raw))
+	switch PowerCapDomain(domain) {
+	case "", PowerCapDomainPackage:
+		return PowerCapDomainPackage, nil
+	case PowerCapDomainDRAM:
+		return PowerCapDomainDRAM, nil
+	default:
+		return "", fmt.Errorf("unsupported power cap domain %q", raw)
+	}
 }

@@ -30,10 +30,13 @@ type uncoreDomain struct {
 }
 
 type raplZone struct {
-	packageID    int
-	energyPath   string
-	powerCapPath string
-	maxPowerPath string
+	packageID        int
+	energyPath       string
+	powerCapPath     string
+	maxPowerPath     string
+	dramEnergyPath   string
+	dramPowerCapPath string
+	dramMaxPowerPath string
 }
 
 type coreTick struct {
@@ -218,16 +221,19 @@ func packageModelFor(mappings []CoreMapping, pkgID int) packageCPUInfo {
 
 func discoverRAPLZones() map[int]raplZone {
 	zones := make(map[int]raplZone)
-	entries, err := os.ReadDir("/sys/class/powercap/intel-rapl")
+	const root = "/sys/class/powercap/intel-rapl"
+	const powercapRoot = "/sys/class/powercap"
+	entries, err := os.ReadDir(root)
 	if err != nil {
 		return zones
 	}
+
 	for _, e := range entries {
 		name := e.Name()
 		if !strings.HasPrefix(name, "intel-rapl:") || strings.Count(name, ":") != 1 {
 			continue
 		}
-		base := filepath.Join("/sys/class/powercap/intel-rapl", name)
+		base := filepath.Join(root, name)
 		zoneName, err := readTrimmed(filepath.Join(base, "name"))
 		if err != nil {
 			continue
@@ -239,14 +245,87 @@ func discoverRAPLZones() map[int]raplZone {
 		if pkgID < 0 {
 			continue
 		}
-		zones[pkgID] = raplZone{
+		zone := raplZone{
 			packageID:    pkgID,
 			energyPath:   filepath.Join(base, "energy_uj"),
 			powerCapPath: filepath.Join(base, "constraint_0_power_limit_uw"),
 			maxPowerPath: filepath.Join(base, "constraint_0_max_power_uw"),
 		}
+		attachDramSubzoneFromPackageBase(base, name, &zone)
+		zones[pkgID] = zone
 	}
+
+	// Some kernels expose intel-rapl:x:y as aliases directly under /sys/class/powercap.
+	// Scan it as a fallback so both layouts work.
+	powercapEntries, err := os.ReadDir(powercapRoot)
+	if err != nil {
+		return zones
+	}
+	for _, e := range powercapEntries {
+		name := e.Name()
+		if !strings.HasPrefix(name, "intel-rapl:") || strings.Count(name, ":") != 2 {
+			continue
+		}
+		pkgID := extractParentPackageID(name)
+		if pkgID < 0 {
+			continue
+		}
+		zone, ok := zones[pkgID]
+		if !ok {
+			continue
+		}
+		if zone.dramEnergyPath != "" {
+			continue
+		}
+		if !attachDramSubzonePaths(filepath.Join(powercapRoot, name), &zone) {
+			continue
+		}
+		zones[pkgID] = zone
+	}
+
 	return zones
+}
+
+func attachDramSubzoneFromPackageBase(base, packageZoneName string, zone *raplZone) {
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasPrefix(name, packageZoneName+":") {
+			continue
+		}
+		if strings.Count(name, ":") < 2 {
+			continue
+		}
+		if attachDramSubzonePaths(filepath.Join(base, name), zone) {
+			return
+		}
+	}
+}
+
+func attachDramSubzonePaths(base string, zone *raplZone) bool {
+	zoneName, err := readTrimmed(filepath.Join(base, "name"))
+	if err != nil || !strings.EqualFold(zoneName, string(PowerCapDomainDRAM)) {
+		return false
+	}
+	zone.dramEnergyPath = filepath.Join(base, "energy_uj")
+	zone.dramPowerCapPath = filepath.Join(base, "constraint_0_power_limit_uw")
+	zone.dramMaxPowerPath = filepath.Join(base, "constraint_0_max_power_uw")
+	return true
+}
+
+func extractParentPackageID(zone string) int {
+	if !strings.HasPrefix(zone, "intel-rapl:") {
+		return -1
+	}
+	trimmed := strings.TrimPrefix(zone, "intel-rapl:")
+	parent, _, ok := strings.Cut(trimmed, ":")
+	if !ok || parent == "" {
+		return -1
+	}
+	return extractPackageID(parent)
 }
 
 func extractPackageID(s string) int {
@@ -551,6 +630,9 @@ func (c *Collector) PackageControls() []PackageControlInfo {
 			ctrl.PowerCapMicroW = cap.CurrentMicroW
 			ctrl.PowerCapMinMicroW = cap.MinMicroWatt
 			ctrl.PowerCapMaxMicroW = cap.MaxMicroWatt
+			ctrl.DramPowerCapMicroW = cap.DramCurrentMicroW
+			ctrl.DramPowerCapMinMicroW = cap.DramMinMicroWatt
+			ctrl.DramPowerCapMaxMicroW = cap.DramMaxMicroWatt
 		}
 	}
 

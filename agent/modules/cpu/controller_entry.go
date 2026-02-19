@@ -58,7 +58,7 @@ func (m *Module) ControllerEntries() []modules.ControllerEntry {
 				if err != nil {
 					return err
 				}
-				return m.controller.SetPowerCap(int(payload.GetPackageId()), payload.GetMicrowatt())
+				return m.controller.SetPowerCap(int(payload.GetPackageId()), payload.GetMicrowatt(), payload.GetDomain())
 			},
 		},
 	}

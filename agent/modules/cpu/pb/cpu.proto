@@ -58,6 +58,9 @@ message PackageControl {
   uint64 power_cap_max_micro_w = 12;
   uint64 scaling_hw_min_khz = 13;
   uint64 scaling_hw_max_khz = 14;
+  uint64 dram_power_cap_micro_w = 15;
+  uint64 dram_power_cap_min_micro_w = 16;
+  uint64 dram_power_cap_max_micro_w = 17;
 }
 
 message CoreFastMetrics {
@@ -73,6 +76,8 @@ message PackageRAPL {
   uint64 energy_micro_j = 2;
   uint64 power_cap_micro_w = 3;
   int64 sampled_at_unix_nano = 4;
+  uint64 dram_energy_micro_j = 5;
+  uint64 dram_power_cap_micro_w = 6;
 }
 
 message PackageTemperature {
@@ -133,4 +138,5 @@ message UncoreRangeCommand {
 message PowerCapCommand {
   int32 package_id = 1;
   uint64 microwatt = 2;
+  string domain = 3;
 }

@@ -33,11 +33,11 @@ type CPUModuleViewProps = {
   sendCommand: (commandType: string, payload: Record<string, unknown>) => void;
 };
 
-function packageRealtimePowerMicroW(
+function packageRealtimePowerBreakdownMicroW(
   prevSample: RawHistorySample,
   curSample: RawHistorySample,
   packageId: number,
-): number {
+): { packageMicroW: number; coreMicroW: number; dramMicroW: number; hasDram: boolean } {
   const prevRapl =
     ((prevSample.sample.cpuUltraMetrics ?? prevSample.sample.cpu_ultra_metrics ?? {}).rapl ?? []) as Array<
       Record<string, any>
@@ -54,14 +54,21 @@ function packageRealtimePowerMicroW(
 
   const curPkg = curRapl.find((c) => numField(c, "packageId", "package_id") === packageId);
   const prevPkg = curPkg ? prevByPkg.get(packageId) : null;
-  if (!curPkg || !prevPkg) return 0;
+  if (!curPkg || !prevPkg) return { packageMicroW: 0, coreMicroW: 0, dramMicroW: 0, hasDram: false };
 
   const curEnergy = numField(curPkg, "energyMicroJ", "energy_micro_j");
   const prevEnergy = numField(prevPkg, "energyMicroJ", "energy_micro_j");
   const curTs = sampledAtNs(curPkg, curSample.atNs);
   const prevTs = sampledAtNs(prevPkg, prevSample.atNs);
-  const rate = deltaRate(curEnergy, prevEnergy, curTs, prevTs);
-  return rate ?? 0;
+  const packageRate = Math.max(deltaRate(curEnergy, prevEnergy, curTs, prevTs) ?? 0, 0);
+
+  const curDramEnergy = numField(curPkg, "dramEnergyMicroJ", "dram_energy_micro_j");
+  const prevDramEnergy = numField(prevPkg, "dramEnergyMicroJ", "dram_energy_micro_j");
+  const hasDram = curDramEnergy > 0 || prevDramEnergy > 0;
+  const dramRate = hasDram ? Math.max(deltaRate(curDramEnergy, prevDramEnergy, curTs, prevTs) ?? 0, 0) : 0;
+  const coreRate = hasDram ? Math.max(packageRate - dramRate, 0) : packageRate;
+
+  return { packageMicroW: packageRate, coreMicroW: coreRate, dramMicroW: dramRate, hasDram };
 }
 
 export function cpuPackageIDsFromRegistration(registration: Record<string, any> | null): number[] {
@@ -136,14 +143,17 @@ export function CPUModuleView({
   const [cpuGovernor, setCpuGovernor] = useState<string>(cpuGovernorOptions[0] ?? "performance");
   const [uncoreRange, setUncoreRange] = useState<[number, number]>([1_200_000, 3_500_000]);
   const [cpuPowerCap, setCpuPowerCap] = useState(120_000_000);
+  const [dramPowerCap, setDramPowerCap] = useState(30_000_000);
   const [showPerCoreRuntime, setShowPerCoreRuntime] = useState(false);
 
   const [isEditingScale, setIsEditingScale] = useState(false);
   const [isEditingUncore, setIsEditingUncore] = useState(false);
   const [isEditingPowerCap, setIsEditingPowerCap] = useState(false);
+  const [isEditingDramPowerCap, setIsEditingDramPowerCap] = useState(false);
   const scaleSyncBlockUntilRef = useRef(0);
   const uncoreSyncBlockUntilRef = useRef(0);
   const powerCapSyncBlockUntilRef = useRef(0);
+  const dramPowerCapSyncBlockUntilRef = useRef(0);
   const governorSyncBlockUntilRef = useRef(0);
 
   const activeUncoreMetric = useMemo(
@@ -175,6 +185,12 @@ export function CPUModuleView({
   const cpuPowerCurrent =
     numField(activeCpuRapl, "powerCapMicroW", "power_cap_micro_w") ||
     numField(activeCpuControl, "powerCapMicroW", "power_cap_micro_w");
+  const dramPowerMin = numField(activeCpuControl, "dramPowerCapMinMicroW", "dram_power_cap_min_micro_w");
+  const dramPowerMax = numField(activeCpuControl, "dramPowerCapMaxMicroW", "dram_power_cap_max_micro_w");
+  const dramPowerCurrent =
+    numField(activeCpuRapl, "dramPowerCapMicroW", "dram_power_cap_micro_w") ||
+    numField(activeCpuControl, "dramPowerCapMicroW", "dram_power_cap_micro_w");
+  const supportsDramPowerCap = dramPowerMax > 0 || dramPowerCurrent > 0 || dramPowerMin > 0;
   const cpuPowerSliderMax = useMemo(() => {
     if (cpuPowerMax > 0) return cpuPowerMax;
     if (cpuPowerCurrent > 0) return cpuPowerCurrent;
@@ -185,6 +201,16 @@ export function CPUModuleView({
     if (cpuPowerMin > 0 && cpuPowerMin <= cpuPowerSliderMax) return cpuPowerMin;
     return Math.min(1_000_000, cpuPowerSliderMax);
   }, [cpuPowerMin, cpuPowerSliderMax]);
+  const dramPowerSliderMax = useMemo(() => {
+    if (dramPowerMax > 0) return dramPowerMax;
+    if (dramPowerCurrent > 0) return dramPowerCurrent;
+    if (dramPowerCap > 0) return dramPowerCap;
+    return 200_000_000;
+  }, [dramPowerMax, dramPowerCurrent, dramPowerCap]);
+  const dramPowerSliderMin = useMemo(() => {
+    if (dramPowerMin > 0 && dramPowerMin <= dramPowerSliderMax) return dramPowerMin;
+    return Math.min(1_000_000, dramPowerSliderMax);
+  }, [dramPowerMin, dramPowerSliderMax]);
   const cpuCurrentCoreKhz = useMemo(() => {
     const perPkg = cpuCores.filter((core) => numField(core, "packageId", "package_id") === packageId);
     if (perPkg.length === 0) return 0;
@@ -212,6 +238,14 @@ export function CPUModuleView({
     sendCommand("cpu_power_cap", {
       packageId,
       microwatt: Math.round(clamp(value, cpuPowerSliderMin, cpuPowerSliderMax)),
+      domain: "package",
+    });
+  }, 20);
+  const dramPowerCapControl = useThrottledEmitter<number>((value) => {
+    sendCommand("cpu_power_cap", {
+      packageId,
+      microwatt: Math.round(clamp(value, dramPowerSliderMin, dramPowerSliderMax)),
+      domain: "dram",
     });
   }, 20);
 
@@ -277,6 +311,21 @@ export function CPUModuleView({
   }, [isEditingPowerCap, cpuPowerCurrent, cpuPowerSliderMin, cpuPowerSliderMax]);
 
   useEffect(() => {
+    if (!supportsDramPowerCap) return;
+    if (isEditingDramPowerCap) return;
+    if (Date.now() < dramPowerCapSyncBlockUntilRef.current) return;
+    const current = dramPowerCurrent > 0 ? dramPowerCurrent : dramPowerSliderMin;
+    const next = clamp(current, dramPowerSliderMin, dramPowerSliderMax);
+    setDramPowerCap((prev) => (Math.abs(prev - next) < 1 ? prev : next));
+  }, [
+    supportsDramPowerCap,
+    isEditingDramPowerCap,
+    dramPowerCurrent,
+    dramPowerSliderMin,
+    dramPowerSliderMax,
+  ]);
+
+  useEffect(() => {
     if (!cpuGovernorOptions.includes(cpuGovernor)) {
       setCpuGovernor(cpuGovernorOptions[0] ?? "performance");
     }
@@ -294,12 +343,19 @@ export function CPUModuleView({
   }, [cpuPowerSliderMin, cpuPowerSliderMax]);
 
   useEffect(() => {
+    if (!supportsDramPowerCap) return;
+    setDramPowerCap((prev) => clamp(prev, dramPowerSliderMin, dramPowerSliderMax));
+  }, [supportsDramPowerCap, dramPowerSliderMin, dramPowerSliderMax]);
+
+  useEffect(() => {
     setIsEditingScale(false);
     setIsEditingUncore(false);
     setIsEditingPowerCap(false);
+    setIsEditingDramPowerCap(false);
     scaleSyncBlockUntilRef.current = 0;
     uncoreSyncBlockUntilRef.current = 0;
     powerCapSyncBlockUntilRef.current = 0;
+    dramPowerCapSyncBlockUntilRef.current = 0;
     governorSyncBlockUntilRef.current = 0;
   }, [packageId]);
 
@@ -408,19 +464,27 @@ export function CPUModuleView({
     for (let i = 1; i < list.length; i += 1) {
       const prev = list[i - 1];
       const cur = list[i];
-      const powerW = packageRealtimePowerMicroW(prev, cur, packageId) / 1_000_000;
-      rows.push({ tsNs: cur.atNs.toString(), time: nsToTimeLabel(cur.atNs), powerW });
+      const breakdown = packageRealtimePowerBreakdownMicroW(prev, cur, packageId);
+      const row: Record<string, number | string> = {
+        tsNs: cur.atNs.toString(),
+        time: nsToTimeLabel(cur.atNs),
+        coreW: breakdown.coreMicroW / 1_000_000,
+      };
+      if (breakdown.hasDram) {
+        row.dramW = breakdown.dramMicroW / 1_000_000;
+      }
+      rows.push(row);
     }
     return rows;
   }, [historyByCategory.cpu_ultra_fast, packageId]);
 
-  const cpuRealtimePowerMicroW = useMemo(() => {
+  const cpuRealtimePower = useMemo(() => {
     const list = historyByCategory.cpu_ultra_fast ?? [];
     for (let i = list.length - 1; i >= 1; i -= 1) {
-      const value = packageRealtimePowerMicroW(list[i - 1], list[i], packageId);
-      if (value > 0) return value;
+      const value = packageRealtimePowerBreakdownMicroW(list[i - 1], list[i], packageId);
+      if (value.packageMicroW > 0 || value.dramMicroW > 0) return value;
     }
-    return 0;
+    return { packageMicroW: 0, coreMicroW: 0, dramMicroW: 0, hasDram: false };
   }, [historyByCategory.cpu_ultra_fast, packageId]);
 
   const cpuUncoreSeries = useMemo(() => {
@@ -482,13 +546,20 @@ export function CPUModuleView({
     [cpuUncoreSeries],
   );
   const showUncore = cpuSupportsUncore || canControlUncore || hasUncoreSample;
+  const hasDramPowerSample = useMemo(() => {
+    return cpuPowerSeries.some((row) => "dramW" in row);
+  }, [cpuPowerSeries]);
+  const showDramPower = supportsDramPowerCap || hasDramPowerSample;
 
   const cpuPowerMaxBound = useMemo(() => {
-    const capW = numField(activeCpuControl, "powerCapMaxMicroW", "power_cap_max_micro_w") / 1_000_000;
-    if (capW > 0) return capW;
-    const sampleMax = cpuPowerSeries.reduce((acc, row) => Math.max(acc, numField(row, "powerW")), 0);
-    return Math.max(sampleMax, 1);
-  }, [activeCpuControl, cpuPowerSeries]);
+    const packageCapW = cpuPowerSliderMax / 1_000_000;
+    const dramCapW = showDramPower ? dramPowerSliderMax / 1_000_000 : 0;
+    const sampleMax = cpuPowerSeries.reduce(
+      (acc, row) => Math.max(acc, numField(row, "coreW"), numField(row, "dramW")),
+      0,
+    );
+    return Math.max(packageCapW, dramCapW, sampleMax, 1);
+  }, [cpuPowerSliderMax, dramPowerSliderMax, showDramPower, cpuPowerSeries]);
 
   const cpuUncoreMaxBound = useMemo(() => {
     const boundMHz = uncoreMax > 0 ? uncoreMax / 1000 : 0;
@@ -662,13 +733,15 @@ export function CPUModuleView({
         ) : null}
 
         <div className="mb-1.5">
-          <div className="mb-0.5 text-sm text-[var(--telemetry-muted-fg)]">Power Cap {formatPowerMicroW(cpuPowerCap)}</div>
+          <div className="mb-0.5 text-sm text-[var(--telemetry-muted-fg)]">
+            Package Power Cap {formatPowerMicroW(cpuPowerCap)}
+          </div>
           <RichControlSlider
             min={cpuPowerSliderMin}
             max={cpuPowerSliderMax}
             step={1000}
             value={[cpuPowerCap]}
-            currentValue={cpuRealtimePowerMicroW > 0 ? cpuRealtimePowerMicroW : null}
+            currentValue={cpuRealtimePower.packageMicroW > 0 ? cpuRealtimePower.packageMicroW : null}
             valueFormatter={(value) => formatPowerMicroW(value)}
             tickFormatter={(value) => formatNumber(value / 1_000_000, 0)}
             onValueChange={(v) => {
@@ -686,6 +759,35 @@ export function CPUModuleView({
             }}
           />
         </div>
+        {supportsDramPowerCap ? (
+          <div className="mb-1.5">
+            <div className="mb-0.5 text-sm text-[var(--telemetry-muted-fg)]">
+              DRAM Power Cap {formatPowerMicroW(dramPowerCap)}
+            </div>
+            <RichControlSlider
+              min={dramPowerSliderMin}
+              max={dramPowerSliderMax}
+              step={1000}
+              value={[dramPowerCap]}
+              currentValue={cpuRealtimePower.hasDram ? cpuRealtimePower.dramMicroW : null}
+              valueFormatter={(value) => formatPowerMicroW(value)}
+              tickFormatter={(value) => formatNumber(value / 1_000_000, 0)}
+              onValueChange={(v) => {
+                const next = clamp(v[0] ?? dramPowerCap, dramPowerSliderMin, dramPowerSliderMax);
+                setIsEditingDramPowerCap(true);
+                setDramPowerCap(next);
+                dramPowerCapControl.send(next);
+              }}
+              onValueCommit={(v) => {
+                const next = clamp(v[0] ?? dramPowerCap, dramPowerSliderMin, dramPowerSliderMax);
+                setDramPowerCap(next);
+                dramPowerCapControl.flush(next);
+                dramPowerCapSyncBlockUntilRef.current = Date.now() + 200;
+                setIsEditingDramPowerCap(false);
+              }}
+            />
+          </div>
+        ) : null}
 
         <div className="mb-1.5">
           <div className="mb-0.5 text-sm text-[var(--telemetry-muted-fg)]">Governor</div>
@@ -747,11 +849,14 @@ export function CPUModuleView({
           yDomain={[0, cpuTempMaxBound]}
         />
         <MetricChart
-          chartId={`cpu-package-power-${cpuChartSuffix}`}
-          title={`CPU ${packageId} Package Power`}
+          chartId={`cpu-power-${cpuChartSuffix}`}
+          title={`CPU ${packageId} Power`}
           yLabel="W"
           data={cpuPowerSeries}
-          lines={[{ key: "powerW", label: "Power", color: "#0e7490" }]}
+          lines={[
+            { key: "coreW", label: "Core", color: "#0e7490" },
+            ...(showDramPower ? [{ key: "dramW", label: "DRAM", color: "#ea580c" }] : []),
+          ]}
           showCurrentStatus
           currentValueFormatter={(value) => `${formatNumber(value, 1)} W`}
           yDomain={[0, cpuPowerMaxBound]}
