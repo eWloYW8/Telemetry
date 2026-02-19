@@ -4,8 +4,8 @@ export type HistoryMap = Record<string, Record<string, RawHistorySample[]>>;
 
 const defaultRetentionNs = 3_600_000_000_000n; // 1 hour
 export const defaultHistoryLimits = {
-  perSeriesMaxPoints: 5_000,
-  totalMaxPoints: 60_000,
+  perSeriesMaxPoints: 500,
+  totalMaxPoints: 10_000,
 } as const;
 
 const minPerSeriesMaxPoints = 100;

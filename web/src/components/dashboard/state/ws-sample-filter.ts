@@ -23,8 +23,8 @@ const identityHintKeys = [
   "fs",
 ] as const;
 
-export const defaultMinSampleIntervalMs = 0;
-export const defaultProcessMinSampleIntervalMs = 0;
+export const defaultMinSampleIntervalMs = 100;
+export const defaultProcessMinSampleIntervalMs = 2000;
 
 export function normalizeMinSampleIntervalMs(value: unknown): number {
   const num = Number(value);

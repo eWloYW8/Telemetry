@@ -4,7 +4,7 @@ export const richControlSliderGradientEnabledStorageKey = "telemetry.rich-contro
 export const chartRenderMaxPointsStorageKey = "telemetry.chart.render-max-points.v1";
 export const dashboardUpdateIntervalMsStorageKey = "telemetry.dashboard.update-interval-ms.v1";
 export const defaultRichControlSliderGradientEnabled = true;
-export const defaultChartRenderMaxPoints = 10000;
+export const defaultChartRenderMaxPoints = 5000;
 export const defaultDashboardUpdateIntervalMs = 20;
 export const uiSettingsChangedEventName = "telemetry:ui-settings-changed";
 
