@@ -16,19 +16,26 @@ import {
 type SettingsModuleViewProps = {
   historyLimits: HistoryLimitSettings;
   minSampleIntervalMs: number;
+  processMinSampleIntervalMs: number;
   onSaveHistoryLimits: (next: Partial<HistoryLimitSettings>) => void;
   onSaveMinSampleIntervalMs: (value: number) => void;
+  onSaveProcessMinSampleIntervalMs: (value: number) => void;
 };
 
 export function SettingsModuleView({
   historyLimits,
   minSampleIntervalMs,
+  processMinSampleIntervalMs,
   onSaveHistoryLimits,
   onSaveMinSampleIntervalMs,
+  onSaveProcessMinSampleIntervalMs,
 }: SettingsModuleViewProps) {
   const [perSeriesValue, setPerSeriesValue] = useState(String(historyLimits.perSeriesMaxPoints));
   const [totalValue, setTotalValue] = useState(String(historyLimits.totalMaxPoints));
   const [minSampleIntervalValue, setMinSampleIntervalValue] = useState(String(minSampleIntervalMs));
+  const [processMinSampleIntervalValue, setProcessMinSampleIntervalValue] = useState(
+    String(processMinSampleIntervalMs),
+  );
 
   useEffect(() => {
     setPerSeriesValue(String(historyLimits.perSeriesMaxPoints));
@@ -38,6 +45,10 @@ export function SettingsModuleView({
   useEffect(() => {
     setMinSampleIntervalValue(String(minSampleIntervalMs));
   }, [minSampleIntervalMs]);
+
+  useEffect(() => {
+    setProcessMinSampleIntervalValue(String(processMinSampleIntervalMs));
+  }, [processMinSampleIntervalMs]);
 
   const normalizedPreview = useMemo(
     () =>
@@ -54,7 +65,7 @@ export function SettingsModuleView({
       icon={<Settings2 className="h-4 w-4" />}
     >
       <div className="space-y-4">
-        <div className="grid gap-3 md:grid-cols-3">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <label className="space-y-1">
             <div className="text-sm font-medium text-[var(--telemetry-text)]">Per Chart Max Points</div>
             <Input
@@ -85,6 +96,16 @@ export function SettingsModuleView({
               onChange={(e) => setMinSampleIntervalValue(e.target.value)}
             />
           </label>
+          <label className="space-y-1">
+            <div className="text-sm font-medium text-[var(--telemetry-text)]">Process Min Sampling Interval (ms)</div>
+            <Input
+              type="number"
+              min={0}
+              step={10}
+              value={processMinSampleIntervalValue}
+              onChange={(e) => setProcessMinSampleIntervalValue(e.target.value)}
+            />
+          </label>
         </div>
 
         <div className="rounded-md border border-[var(--telemetry-border)] bg-[var(--telemetry-surface-soft)] p-3 text-sm">
@@ -98,6 +119,9 @@ export function SettingsModuleView({
           <div className="text-[var(--telemetry-muted-fg)]">
             Min Sampling Interval: {Number(minSampleIntervalValue).toLocaleString()} ms
           </div>
+          <div className="text-[var(--telemetry-muted-fg)]">
+            Process Min Sampling Interval: {Number(processMinSampleIntervalValue).toLocaleString()} ms
+          </div>
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -109,6 +133,7 @@ export function SettingsModuleView({
                 totalMaxPoints: Number(totalValue),
               });
               onSaveMinSampleIntervalMs(Number(minSampleIntervalValue));
+              onSaveProcessMinSampleIntervalMs(Number(processMinSampleIntervalValue));
             }}
           >
             Save
@@ -121,8 +146,10 @@ export function SettingsModuleView({
               setPerSeriesValue(String(defaults.perSeriesMaxPoints));
               setTotalValue(String(defaults.totalMaxPoints));
               setMinSampleIntervalValue("0");
+              setProcessMinSampleIntervalValue("0");
               onSaveHistoryLimits(defaults);
               onSaveMinSampleIntervalMs(0);
+              onSaveProcessMinSampleIntervalMs(0);
             }}
           >
             Reset Defaults

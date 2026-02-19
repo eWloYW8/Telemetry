@@ -31,7 +31,9 @@ const staleAfterNs = 8_000_000_000n;
 const commandTimeoutMs = 15_000;
 const historyLimitsStorageKey = "telemetry.history.limits.v1";
 const minSampleIntervalStorageKey = "telemetry.min-sample-interval-ms.v1";
+const processMinSampleIntervalStorageKey = "telemetry.process-min-sample-interval-ms.v1";
 const defaultMinSampleIntervalMs = 0;
+const defaultProcessMinSampleIntervalMs = 0;
 const minSampleIntervalMsMin = 0;
 const minSampleIntervalMsMax = 60_000;
 const sampleMetaKeys = new Set(["category", "atUnixNano", "at_unix_nano"]);
@@ -116,6 +118,16 @@ function filterSampleByMinInterval(
   if (minIntervalMs <= 0) return sample;
 
   const minIntervalNs = BigInt(minIntervalMs) * 1_000_000n;
+  // Process payload is a snapshot table. Filtering individual rows causes partial views.
+  // Keep snapshot atomic: either accept whole sample or drop whole sample by interval.
+  if (category === "process") {
+    const snapshotKey = `${nodeId}\u0000${category}\u0000snapshot`;
+    if (!shouldAcceptPoint(lastAcceptedByPoint, snapshotKey, atNs, minIntervalNs)) {
+      return null;
+    }
+    return sample;
+  }
+
   let acceptedPoints = 0;
   const nextSample: Record<string, any> = {};
 
@@ -187,12 +199,16 @@ export function useTelemetryWS() {
     normalizeHistoryLimitSettings(defaultHistoryLimits),
   );
   const [minSampleIntervalMs, setMinSampleIntervalMsState] = useState<number>(defaultMinSampleIntervalMs);
+  const [processMinSampleIntervalMs, setProcessMinSampleIntervalMsState] = useState<number>(
+    defaultProcessMinSampleIntervalMs,
+  );
 
   const selectedNodeRef = useRef("");
   const socketRef = useRef<WebSocket | null>(null);
   const pendingCommandsRef = useRef<Map<string, PendingCommand>>(new Map());
   const historyLimitsRef = useRef(historyLimits);
   const minSampleIntervalMsRef = useRef(minSampleIntervalMs);
+  const processMinSampleIntervalMsRef = useRef(processMinSampleIntervalMs);
   const lastAcceptedPointByStreamRef = useRef<Map<string, bigint>>(new Map());
 
   useEffect(() => {
@@ -202,6 +218,10 @@ export function useTelemetryWS() {
   useEffect(() => {
     minSampleIntervalMsRef.current = minSampleIntervalMs;
   }, [minSampleIntervalMs]);
+
+  useEffect(() => {
+    processMinSampleIntervalMsRef.current = processMinSampleIntervalMs;
+  }, [processMinSampleIntervalMs]);
 
   useEffect(() => {
     try {
@@ -239,6 +259,24 @@ export function useTelemetryWS() {
       // ignore localStorage errors
     }
   }, [minSampleIntervalMs]);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(processMinSampleIntervalStorageKey);
+      if (!raw) return;
+      setProcessMinSampleIntervalMsState(normalizeMinSampleIntervalMs(raw));
+    } catch {
+      // ignore malformed persisted settings
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(processMinSampleIntervalStorageKey, String(processMinSampleIntervalMs));
+    } catch {
+      // ignore localStorage errors
+    }
+  }, [processMinSampleIntervalMs]);
 
   const resolvePendingCommand = (commandID: string, result: CommandDispatchResult) => {
     const pending = pendingCommandsRef.current.get(commandID);
@@ -362,7 +400,8 @@ export function useTelemetryWS() {
           if (!nodeId || !category || atNs <= 0n) {
             return;
           }
-          const minIntervalMs = minSampleIntervalMsRef.current;
+          const minIntervalMs =
+            category === "process" ? processMinSampleIntervalMsRef.current : minSampleIntervalMsRef.current;
           const filteredSample = filterSampleByMinInterval(
             nodeId,
             category,
@@ -484,6 +523,7 @@ export function useTelemetryWS() {
     history,
     historyLimits,
     minSampleIntervalMs,
+    processMinSampleIntervalMs,
     setHistoryLimits: (nextLimits: Partial<HistoryLimitSettings>) => {
       const normalized = normalizeHistoryLimitSettings(nextLimits);
       setHistoryLimitsState(normalized);
@@ -491,6 +531,9 @@ export function useTelemetryWS() {
     },
     setMinSampleIntervalMs: (value: number) => {
       setMinSampleIntervalMsState(normalizeMinSampleIntervalMs(value));
+    },
+    setProcessMinSampleIntervalMs: (value: number) => {
+      setProcessMinSampleIntervalMsState(normalizeMinSampleIntervalMs(value));
     },
     selectedNodeRef,
     sendCommand,

@@ -25,8 +25,10 @@ export function DashboardShell() {
     history,
     historyLimits,
     minSampleIntervalMs,
+    processMinSampleIntervalMs,
     setHistoryLimits,
     setMinSampleIntervalMs,
+    setProcessMinSampleIntervalMs,
     sendCommand: sendCommandWS,
   } = useTelemetryWS();
 
@@ -119,8 +121,10 @@ export function DashboardShell() {
             <SettingsModuleView
               historyLimits={historyLimits}
               minSampleIntervalMs={minSampleIntervalMs}
+              processMinSampleIntervalMs={processMinSampleIntervalMs}
               onSaveHistoryLimits={setHistoryLimits}
               onSaveMinSampleIntervalMs={setMinSampleIntervalMs}
+              onSaveProcessMinSampleIntervalMs={setProcessMinSampleIntervalMs}
             />
           ) : !selectedNode ? (
             <div className="telemetry-empty p-6 text-sm">Select a node from the panel.</div>
