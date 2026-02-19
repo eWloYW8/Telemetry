@@ -342,7 +342,7 @@ export function MetricChart({
           </Select>
         </div>
       </div>
-      <div className="h-72 w-full px-2 py-2">
+      <div className="h-80 w-full px-2 py-2">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={chartData}>
             <CartesianGrid stroke="var(--telemetry-border-subtle)" strokeDasharray="3 3" />
@@ -366,10 +366,14 @@ export function MetricChart({
               tickLine={{ stroke: "var(--telemetry-border)" }}
               label={{ value: yLabel, angle: -90, position: "insideLeft", fill: "var(--telemetry-muted-fg)", fontSize: 11 }}
             />
-            <Tooltip content={renderTooltip} cursor={{ stroke: "var(--telemetry-border-strong)" }} />
+            <Tooltip
+              content={renderTooltip}
+              cursor={{ stroke: "var(--telemetry-border-strong)" }}
+              wrapperStyle={{ zIndex: 40, pointerEvents: "none" }}
+            />
             <Legend
               iconSize={8}
-              wrapperStyle={{ fontSize: "11px", color: "var(--telemetry-muted-fg)" }}
+              wrapperStyle={{ fontSize: "11px", color: "var(--telemetry-muted-fg)", zIndex: 10 }}
               formatter={(value) => <span style={{ color: "var(--telemetry-muted-fg)" }}>{String(value)}</span>}
             />
             {lines.map((line) => (
