@@ -108,22 +108,6 @@ export function SettingsModuleView({
           </label>
         </div>
 
-        <div className="rounded-md border border-[var(--telemetry-border)] bg-[var(--telemetry-surface-soft)] p-3 text-sm">
-          <div className="font-medium text-[var(--telemetry-text)]">Effective Values</div>
-          <div className="mt-1 text-[var(--telemetry-muted-fg)]">
-            Per Chart Max Points: {normalizedPreview.perSeriesMaxPoints.toLocaleString()} points
-          </div>
-          <div className="text-[var(--telemetry-muted-fg)]">
-            Total Max Points: {normalizedPreview.totalMaxPoints.toLocaleString()} points
-          </div>
-          <div className="text-[var(--telemetry-muted-fg)]">
-            Min Sampling Interval: {Number(minSampleIntervalValue).toLocaleString()} ms
-          </div>
-          <div className="text-[var(--telemetry-muted-fg)]">
-            Process Min Sampling Interval: {Number(processMinSampleIntervalValue).toLocaleString()} ms
-          </div>
-        </div>
-
         <div className="flex flex-wrap gap-2">
           <Button
             size="sm"

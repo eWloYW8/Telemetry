@@ -32,8 +32,11 @@ type MetricChartProps = {
   lines: ChartLineDef[];
   yDomain?: [number | "auto" | "dataMin" | "dataMax", number | "auto" | "dataMin" | "dataMax"];
   showCurrentStatus?: boolean;
-  currentValueFormatter?: (value: number, line: ChartLineDef) => string;
+  currentValueFormatter?: (value: number, line: ChartLineDef) => string | null;
+  connectNulls?: boolean;
 };
+
+type ChartDataRow = Record<string, number | string> & { __xMs: number };
 
 const windowOptions: Array<{ value: number; label: string }> = [
   { value: 1, label: "1s" },
@@ -64,6 +67,7 @@ export function MetricChart({
   yDomain,
   showCurrentStatus = false,
   currentValueFormatter,
+  connectNulls = false,
 }: MetricChartProps) {
   const storageKey = `telemetry.chart.window.${chartId}`;
   const [windowSec, setWindowSec] = useState<number>(defaultWindowSec);
@@ -94,7 +98,7 @@ export function MetricChart({
     if (data.length === 0) {
       const minTs = fallbackLatest - BigInt(windowSec) * 1_000_000_000n;
       return {
-        chartData: [] as Array<Record<string, number | string>>,
+        chartData: [] as ChartDataRow[],
         xDomain: [Number(minTs / 1_000_000n), Number(fallbackLatest / 1_000_000n)] as [number, number],
       };
     }
@@ -110,7 +114,7 @@ export function MetricChart({
     }
     const minTs = latest - BigInt(windowSec) * 1_000_000_000n;
     const filtered = withTs.filter((x) => x.ts > 0n && x.ts >= minTs && x.ts <= latest);
-    const rows = filtered.map((x) => ({
+    const rows: ChartDataRow[] = filtered.map((x) => ({
       ...x.row,
       __xMs: Number(x.ts / 1_000_000n),
     }));
@@ -133,25 +137,96 @@ export function MetricChart({
     return `${hh}:${mm}:${ss}`;
   };
 
-  const renderTooltip = ({ active, payload }: { active?: boolean; payload?: readonly any[] }) => {
-    if (!active || !payload || payload.length === 0) return null;
-    const row = (payload[0]?.payload ?? {}) as Record<string, number | string>;
-    const ts = rowTsNs(row);
+  const renderTooltip = ({
+    active,
+    payload,
+    label,
+  }: {
+    active?: boolean;
+    payload?: readonly any[];
+    label?: number | string;
+  }) => {
+    if (!active) return null;
+
+    const row = (payload?.[0]?.payload ?? {}) as Record<string, number | string>;
+    const hoveredXMs =
+      typeof row.__xMs === "number"
+        ? row.__xMs
+        : typeof label === "number"
+          ? label
+          : Number(label ?? NaN);
+
+    const ts = (() => {
+      const rowTs = rowTsNs(row);
+      if (rowTs > 0n) return rowTs;
+      if (Number.isFinite(hoveredXMs)) {
+        return BigInt(Math.trunc(hoveredXMs)) * 1_000_000n;
+      }
+      return 0n;
+    })();
+
+    const payloadByKey = new Map<string, any>();
+    for (const p of payload ?? []) {
+      payloadByKey.set(String(p.dataKey ?? ""), p);
+    }
+
+    const tooltipItems = lines.map((line) => {
+      const existing = payloadByKey.get(line.key);
+      if (existing) {
+        const value = Number(existing.value ?? 0);
+        if (Number.isFinite(value)) {
+          return { key: line.key, label: line.label, color: line.color, value };
+        }
+      }
+
+      let nearestValue: number | null = null;
+      let nearestDelta = Number.POSITIVE_INFINITY;
+      let latestX = Number.NEGATIVE_INFINITY;
+      let latestValue: number | null = null;
+      for (let i = 0; i < chartData.length; i += 1) {
+        const x = Number(chartData[i]?.__xMs ?? NaN);
+        if (!Number.isFinite(x)) continue;
+        const raw = chartData[i]?.[line.key];
+        const value = typeof raw === "number" ? raw : Number(raw);
+        if (!Number.isFinite(value)) continue;
+
+        if (x >= latestX) {
+          latestX = x;
+          latestValue = value;
+        }
+
+        if (!Number.isFinite(hoveredXMs)) continue;
+        const delta = Math.abs(x - hoveredXMs);
+        if (delta < nearestDelta) {
+          nearestDelta = delta;
+          nearestValue = value;
+        }
+      }
+
+      return {
+        key: line.key,
+        label: line.label,
+        color: line.color,
+        value: nearestValue ?? latestValue,
+      };
+    });
+
     return (
       <div className="telemetry-panel min-w-[170px] p-2 shadow-md">
         <div className="mb-1 text-[11px] font-medium text-[var(--telemetry-text)]">
           {ts > 0n ? nsToPreciseLabel(ts) : "timestamp unavailable"}
         </div>
         <div className="space-y-0.5 text-[11px]">
-          {payload.map((p, idx) => {
-            const value = Number(p.value ?? 0);
+          {tooltipItems.map((item, idx) => {
             return (
-              <div key={`${p.dataKey ?? idx}`} className="flex items-center justify-between gap-3">
+              <div key={`${item.key ?? idx}`} className="flex items-center justify-between gap-3">
                 <span className="inline-flex items-center gap-1 text-[var(--telemetry-muted-fg)]">
-                  <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: p.color }} />
-                  {String(p.name ?? p.dataKey)}
+                  <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: item.color }} />
+                  {item.label}
                 </span>
-                <span className="font-mono text-[var(--telemetry-text)]">{formatNumber(value, 3)}</span>
+                <span className="font-mono text-[var(--telemetry-text)]">
+                  {item.value === null ? "-" : formatNumber(item.value, 3)}
+                </span>
               </div>
             );
           })}
@@ -192,6 +267,7 @@ export function MetricChart({
 
         if (bestValue === null) return null;
         const text = currentValueFormatter ? currentValueFormatter(bestValue, line) : formatNumber(bestValue, 3);
+        if (!text) return null;
         return { line, text };
       })
       .filter((item): item is { line: ChartLineDef; text: string } => item !== null);
@@ -199,12 +275,12 @@ export function MetricChart({
 
   return (
     <div className="telemetry-panel overflow-hidden">
-      <div className="telemetry-panel-header flex items-start justify-between gap-3">
+      <div className="telemetry-panel-header flex items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <div className="telemetry-title">{title}</div>
             {currentStatusItems.length > 0 ? (
-              <div className="inline-flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[14px] tracking-tight">
+              <div className="inline-flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[16px] tracking-tight">
                 {currentStatusItems.map((item) => (
                   <span key={`${chartId}-${item.line.key}`} className="inline-flex items-center gap-1">
                     {currentStatusItems.length > 1 ? (
@@ -233,7 +309,7 @@ export function MetricChart({
           </Select>
         </div>
       </div>
-      <div className="h-56 w-full px-2 py-2">
+      <div className="h-72 w-full px-2 py-2">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={chartData}>
             <CartesianGrid stroke="var(--telemetry-border-subtle)" strokeDasharray="3 3" />
@@ -270,9 +346,9 @@ export function MetricChart({
                 dataKey={line.key}
                 name={line.label}
                 stroke={line.color}
-                strokeWidth={2}
+                strokeWidth={0.8}
                 dot={false}
-                connectNulls={false}
+                connectNulls={connectNulls}
                 isAnimationActive={false}
               />
             ))}

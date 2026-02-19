@@ -1,6 +1,6 @@
 "use client";
 
-import { Server, Settings2 } from "lucide-react";
+import { Server, Settings2, Zap } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -12,6 +12,8 @@ type NodeSidebarProps = {
   nodes: NodeRuntime[];
   selectedNodeId: string;
   onSelectNode: (nodeId: string) => void;
+  powerSelected: boolean;
+  onSelectPower: () => void;
   settingsSelected: boolean;
   onSelectSettings: () => void;
 };
@@ -25,6 +27,8 @@ export function NodeSidebar({
   nodes,
   selectedNodeId,
   onSelectNode,
+  powerSelected,
+  onSelectPower,
   settingsSelected,
   onSelectSettings,
 }: NodeSidebarProps) {
@@ -103,6 +107,21 @@ export function NodeSidebar({
           </div>
 
           <div className="border-t border-[var(--telemetry-border)] pt-2">
+            <button
+              type="button"
+              onClick={onSelectPower}
+              className={cn(
+                "mb-1.5 w-full rounded-md border p-2.5 text-left text-sm font-semibold transition-colors",
+                powerSelected
+                  ? "border-[var(--telemetry-accent)] bg-[var(--telemetry-accent-soft)]"
+                  : "border-[var(--telemetry-border)] bg-[var(--telemetry-surface)] hover:bg-[var(--telemetry-row-hover)]",
+              )}
+            >
+              <span className="inline-flex items-center gap-1.5">
+                <Zap className="h-4 w-4" />
+                Power
+              </span>
+            </button>
             <button
               type="button"
               onClick={onSelectSettings}

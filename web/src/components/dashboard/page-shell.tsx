@@ -10,12 +10,14 @@ import { CPUModuleView, cpuPackageIDsFromRegistration } from "./modules/cpu/modu
 import { GPUModuleView, gpuIndexesFromRegistration } from "./modules/gpu/module";
 import { MemoryModuleView } from "./modules/memory/module";
 import { NetworkModuleView } from "./modules/network/module";
+import { PowerModuleView } from "./modules/power/module";
 import { ProcessModuleView } from "./modules/process/module";
 import { SettingsModuleView } from "./modules/settings/module";
 import { StorageModuleView } from "./modules/storage/module";
 import { useTelemetryWS } from "./state/ws-client";
 import type { TabKey } from "./types";
 
+const powerViewID = "__power__";
 const settingsViewID = "__settings__";
 
 export function DashboardShell() {
@@ -40,19 +42,22 @@ export function DashboardShell() {
 
   useEffect(() => {
     if (nodes.length === 0) {
-      if (selectedNodeId && selectedNodeId !== settingsViewID) setSelectedNodeId("");
+      if (selectedNodeId && selectedNodeId !== settingsViewID && selectedNodeId !== powerViewID) {
+        setSelectedNodeId("");
+      }
       return;
     }
-    if (selectedNodeId === settingsViewID) return;
+    if (selectedNodeId === settingsViewID || selectedNodeId === powerViewID) return;
     if (!selectedNodeId || !nodes.some((n) => n.nodeId === selectedNodeId)) {
       setSelectedNodeId(nodes[0].nodeId);
     }
   }, [nodes, selectedNodeId]);
 
+  const powerSelected = selectedNodeId === powerViewID;
   const settingsSelected = selectedNodeId === settingsViewID;
   const selectedNode = useMemo(
-    () => (settingsSelected ? null : nodes.find((n) => n.nodeId === selectedNodeId) ?? null),
-    [nodes, selectedNodeId, settingsSelected],
+    () => (settingsSelected || powerSelected ? null : nodes.find((n) => n.nodeId === selectedNodeId) ?? null),
+    [nodes, selectedNodeId, settingsSelected, powerSelected],
   );
 
   const registration = (selectedNode?.registration ?? null) as Record<string, any> | null;
@@ -112,12 +117,16 @@ export function DashboardShell() {
           nodes={nodes}
           selectedNodeId={selectedNodeId}
           onSelectNode={setSelectedNodeId}
+          powerSelected={powerSelected}
+          onSelectPower={() => setSelectedNodeId(powerViewID)}
           settingsSelected={settingsSelected}
           onSelectSettings={() => setSelectedNodeId(settingsViewID)}
         />
 
         <main className="min-w-0 flex-1 space-y-3 lg:min-h-0 lg:overflow-auto">
-          {settingsSelected ? (
+          {powerSelected ? (
+            <PowerModuleView nodes={nodes} history={history} />
+          ) : settingsSelected ? (
             <SettingsModuleView
               historyLimits={historyLimits}
               minSampleIntervalMs={minSampleIntervalMs}
