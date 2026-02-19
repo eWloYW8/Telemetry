@@ -1,0 +1,169 @@
+name: Build and Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Tag version to release"
+        required: true
+  push:
+    paths-ignore:
+      - "docs/**"
+      - "README.md"
+    tags:
+      - "v*"
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: true
+
+jobs:
+  build_and_release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Install protobuf compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+
+      - name: Install Go protobuf plugins
+        shell: bash
+        run: |
+          set -euo pipefail
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.34.1
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.5.1
+
+      - name: Generate Go protobuf code
+        shell: bash
+        run: |
+          set -euo pipefail
+          make proto
+
+      - name: Install web dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd web
+          pnpm install --frozen-lockfile
+
+      - name: Build web UI and embed assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          make ui-build
+
+      - name: Build all targets and binaries (single run)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build
+
+          VERSION="${{ github.event.inputs.version || github.ref_name }}"
+          echo "Version: ${VERSION}"
+
+          BINARIES=(
+            "telemetry-server:./cmd/telemetry-server"
+            "telemetry-agent:./cmd/telemetry-agent"
+          )
+
+          TARGETS=(
+            "goos=linux goarch=amd64 goamd64=v1 output=amd64-compatible"
+            "goos=linux goarch=amd64 goamd64=v3 output=amd64"
+            "goos=linux goarch=arm64 output=arm64"
+            "goos=linux goarch=riscv64 output=riscv64"
+          )
+
+          build_one() {
+            local bin_name="$1"
+            local bin_path="$2"
+            local goos="$3"
+            local goarch="$4"
+            local output="$5"
+            local go386="${6:-}"
+            local goamd64="${7:-}"
+            local goarm="${8:-}"
+            local gomips="${9:-}"
+
+            local ext=""
+            if [[ "$goos" == "windows" ]]; then
+              ext=".exe"
+            fi
+
+            local filename="${bin_name}-${goos}-${output}${ext}"
+            echo "==> ${filename} (${bin_path})"
+
+            GOOS="$goos" \
+            GOARCH="$goarch" \
+            GO386="$go386" \
+            GOAMD64="$goamd64" \
+            GOARM="$goarm" \
+            GOMIPS="$gomips" \
+            go build -trimpath -ldflags "-s -w -X main.Version=${VERSION}" -o "build/${filename}" "${bin_path}"
+          }
+
+          for b in "${BINARIES[@]}"; do
+            BIN_NAME="${b%%:*}"
+            BIN_PATH="${b#*:}"
+
+            for t in "${TARGETS[@]}"; do
+              # 解析 key=value
+              goos=""; goarch=""; output=""
+              go386=""; goamd64=""; goarm=""; gomips=""
+
+              for kv in $t; do
+                key="${kv%%=*}"
+                val="${kv#*=}"
+                case "$key" in
+                  goos) goos="$val" ;;
+                  goarch) goarch="$val" ;;
+                  output) output="$val" ;;
+                  go386) go386="$val" ;;
+                  goamd64) goamd64="$val" ;;
+                  goarm) goarm="$val" ;;
+                  gomips) gomips="$val" ;;
+                esac
+              done
+
+              build_one "$BIN_NAME" "$BIN_PATH" "$goos" "$goarch" "$output" "$go386" "$goamd64" "$goarm" "$gomips"
+            done
+          done
+
+          echo "Build done. Files:"
+          ls -lah build | sed -n '1,200p'
+
+      - name: Upload build artifact (single upload)
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-all
+          path: build/*
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
