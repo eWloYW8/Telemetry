@@ -24,6 +24,7 @@ export const wsCategories = [
   "memory",
   "storage",
   "network",
+  "infiniband",
   "process",
 ] as const;
 

@@ -9,6 +9,7 @@ import "agent/modules/gpu/pb/gpu.proto";
 import "agent/modules/memory/pb/memory.proto";
 import "agent/modules/storage/pb/storage.proto";
 import "agent/modules/network/pb/network.proto";
+import "agent/modules/infiniband/pb/infiniband.proto";
 import "agent/modules/process/pb/process.proto";
 
 message BasicInfo {
@@ -32,6 +33,7 @@ message ModuleRegistration {
     telemetry.module.storage.v1.ModuleRegistration storage = 13;
     telemetry.module.network.v1.ModuleRegistration network = 14;
     telemetry.module.process.v1.ModuleRegistration process = 15;
+    telemetry.module.infiniband.v1.ModuleRegistration infiniband = 16;
   }
 }
 
@@ -59,6 +61,7 @@ message MetricSample {
     telemetry.module.storage.v1.Metrics storage_metrics = 14;
     telemetry.module.network.v1.Metrics network_metrics = 15;
     telemetry.module.process.v1.Metrics process_metrics = 16;
+    telemetry.module.infiniband.v1.Metrics infiniband_metrics = 17;
   }
 }
 

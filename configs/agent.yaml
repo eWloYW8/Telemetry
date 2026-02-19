@@ -11,9 +11,10 @@ report:
     memory: 100ms
     storage: 100ms
     network: 100ms
-    process: 1s
+    infiniband: 100ms
+    process: 2s
   heartbeat: 2s
-  batch_flush: 100ms
+  batch_flush: 20ms
   max_per_batch: 6400
 log:
   level: info

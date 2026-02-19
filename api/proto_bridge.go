@@ -3,6 +3,7 @@ package api
 import (
 	cpupb "github.com/eWloYW8/Telemetry/agent/modules/cpu/pb"
 	gpupb "github.com/eWloYW8/Telemetry/agent/modules/gpu/pb"
+	infinibandpb "github.com/eWloYW8/Telemetry/agent/modules/infiniband/pb"
 	memorypb "github.com/eWloYW8/Telemetry/agent/modules/memory/pb"
 	networkpb "github.com/eWloYW8/Telemetry/agent/modules/network/pb"
 	processpb "github.com/eWloYW8/Telemetry/agent/modules/process/pb"
@@ -11,13 +12,14 @@ import (
 )
 
 const (
-	categoryCPUUltra  = "cpu_ultra_fast"
-	categoryCPUMedium = "cpu_medium"
-	categoryGPUFast   = "gpu_fast"
-	categoryMemory    = "memory"
-	categoryStorage   = "storage"
-	categoryNetwork   = "network"
-	categoryProcess   = "process"
+	categoryCPUUltra   = "cpu_ultra_fast"
+	categoryCPUMedium  = "cpu_medium"
+	categoryGPUFast    = "gpu_fast"
+	categoryMemory     = "memory"
+	categoryStorage    = "storage"
+	categoryNetwork    = "network"
+	categoryInfiniBand = "infiniband"
+	categoryProcess    = "process"
 )
 
 const (
@@ -185,6 +187,10 @@ func toPBModuleRegistration(name string, payload any) *transportpb.ModuleRegistr
 		if v, ok := decodeAs[networkpb.ModuleRegistration](payload); ok {
 			return &transportpb.ModuleRegistration{Name: name, Metadata: &transportpb.ModuleRegistration_Network{Network: v}}
 		}
+	case "infiniband":
+		if v, ok := decodeAs[infinibandpb.ModuleRegistration](payload); ok {
+			return &transportpb.ModuleRegistration{Name: name, Metadata: &transportpb.ModuleRegistration_Infiniband{Infiniband: v}}
+		}
 	case "process":
 		if v, ok := decodeAs[processpb.ModuleRegistration](payload); ok {
 			return &transportpb.ModuleRegistration{Name: name, Metadata: &transportpb.ModuleRegistration_Process{Process: v}}
@@ -208,6 +214,8 @@ func fromPBModuleRegistration(v *transportpb.ModuleRegistration) (string, any) {
 		return v.GetName(), payload.Storage
 	case *transportpb.ModuleRegistration_Network:
 		return v.GetName(), payload.Network
+	case *transportpb.ModuleRegistration_Infiniband:
+		return v.GetName(), payload.Infiniband
 	case *transportpb.ModuleRegistration_Process:
 		return v.GetName(), payload.Process
 	default:
@@ -320,6 +328,10 @@ func setPBMetricPayload(out *transportpb.MetricSample, payload any) {
 		if v, ok := decodeAs[networkpb.Metrics](payload); ok {
 			out.Payload = &transportpb.MetricSample_NetworkMetrics{NetworkMetrics: v}
 		}
+	case categoryInfiniBand:
+		if v, ok := decodeAs[infinibandpb.Metrics](payload); ok {
+			out.Payload = &transportpb.MetricSample_InfinibandMetrics{InfinibandMetrics: v}
+		}
 	case categoryProcess:
 		if v, ok := decodeAs[processpb.Metrics](payload); ok {
 			out.Payload = &transportpb.MetricSample_ProcessMetrics{ProcessMetrics: v}
@@ -344,6 +356,8 @@ func fromPBMetricPayload(v *transportpb.MetricSample) any {
 		return payload.StorageMetrics
 	case *transportpb.MetricSample_NetworkMetrics:
 		return payload.NetworkMetrics
+	case *transportpb.MetricSample_InfinibandMetrics:
+		return payload.InfinibandMetrics
 	case *transportpb.MetricSample_ProcessMetrics:
 		return payload.ProcessMetrics
 	default:

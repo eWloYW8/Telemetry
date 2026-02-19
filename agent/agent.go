@@ -19,6 +19,7 @@ import (
 	"github.com/eWloYW8/Telemetry/agent/modules"
 	cpuModule "github.com/eWloYW8/Telemetry/agent/modules/cpu"
 	gpuModule "github.com/eWloYW8/Telemetry/agent/modules/gpu"
+	infinibandModule "github.com/eWloYW8/Telemetry/agent/modules/infiniband"
 	memoryModule "github.com/eWloYW8/Telemetry/agent/modules/memory"
 	networkModule "github.com/eWloYW8/Telemetry/agent/modules/network"
 	processModule "github.com/eWloYW8/Telemetry/agent/modules/process"
@@ -75,6 +76,7 @@ func New(cfg config.AgentConfig, logger zerolog.Logger) (*Agent, error) {
 		memoryModule.New(cfg.Report),
 		storageModule.New(cfg.Report),
 		networkModule.New(cfg.Report),
+		infinibandModule.New(cfg.Report),
 		processModule.New(cfg.Report),
 	)
 	if err != nil {

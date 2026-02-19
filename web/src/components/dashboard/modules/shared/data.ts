@@ -43,7 +43,7 @@ export function moduleMeta(registration: Record<string, any> | null | undefined,
   for (const moduleEntry of modules) {
     if (moduleEntry.name !== moduleName) continue;
     if (moduleEntry[moduleName]) return moduleEntry[moduleName] as Record<string, any>;
-    for (const key of ["cpu", "gpu", "memory", "storage", "network", "process"]) {
+    for (const key of ["cpu", "gpu", "memory", "storage", "network", "infiniband", "process"]) {
       if (moduleEntry[key]) return moduleEntry[key] as Record<string, any>;
     }
   }

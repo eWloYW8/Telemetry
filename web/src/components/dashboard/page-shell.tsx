@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { NodeSidebar } from "./components/node/node-sidebar";
 import { CPUModuleView, cpuPackageIDsFromRegistration } from "./modules/cpu/module";
 import { GPUModuleView, gpuIndexesFromRegistration } from "./modules/gpu/module";
+import { InfiniBandModuleView } from "./modules/infiniband/module";
 import { MemoryModuleView } from "./modules/memory/module";
 import { NetworkModuleView } from "./modules/network/module";
 import { PowerModuleView } from "./modules/power/module";
@@ -71,7 +72,7 @@ export function DashboardShell() {
     const values: string[] = [];
     for (const pkg of cpuPackageIds) values.push(`cpu:${pkg}`);
     for (const idx of gpuIndexes) values.push(`gpu:${idx}`);
-    values.push("memory", "storage", "network", "process");
+    values.push("memory", "storage", "network", "infiniband", "process");
     return values;
   }, [cpuPackageIds, gpuIndexes]);
 
@@ -188,6 +189,12 @@ export function DashboardShell() {
                           <Network className="h-4 w-4" /> Network
                         </TabsTrigger>
                         <TabsTrigger
+                          value="infiniband"
+                          className={topTabTriggerClass}
+                        >
+                          <Network className="h-4 w-4" /> InfiniBand
+                        </TabsTrigger>
+                        <TabsTrigger
                           value="process"
                           className={topTabTriggerClass}
                         >
@@ -246,6 +253,10 @@ export function DashboardShell() {
 
                 <TabsContent value="network" className="space-y-3">
                   <NetworkModuleView latestRaw={latestRaw} historyByCategory={historyByCategory} />
+                </TabsContent>
+
+                <TabsContent value="infiniband" className="space-y-3">
+                  <InfiniBandModuleView latestRaw={latestRaw} historyByCategory={historyByCategory} />
                 </TabsContent>
 
                 <TabsContent value="process" className="space-y-3">

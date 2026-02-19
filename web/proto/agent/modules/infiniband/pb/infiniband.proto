@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package telemetry.module.infiniband.v1;
+
+option go_package = "github.com/eWloYW8/Telemetry/agent/modules/infiniband/pb;infinibandpb";
+
+message CollectorSpec {
+  string category = 1;
+  string interval = 2;
+}
+
+message ModuleRegistration {
+  repeated CollectorSpec collectors = 1;
+}
+
+message InterfaceMetrics {
+  string name = 1;
+  string address = 2;
+  string oper_state = 3;
+  uint32 mtu = 4;
+  string ib_device = 5;
+  uint32 port = 6;
+  string rate = 7;
+  string link_state = 8;
+  string physical_state = 9;
+  uint64 rx_bytes = 10;
+  uint64 tx_bytes = 11;
+  int64 sampled_at_unix_nano = 12;
+}
+
+message Metrics {
+  repeated InterfaceMetrics interfaces = 1;
+}

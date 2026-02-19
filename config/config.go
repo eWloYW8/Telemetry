@@ -97,6 +97,7 @@ func DefaultAgentConfig() AgentConfig {
 				"memory":         1 * time.Second,
 				"storage":        5 * time.Second,
 				"network":        5 * time.Second,
+				"infiniband":     5 * time.Second,
 				"process":        5 * time.Second,
 			},
 			Heartbeat:   2 * time.Second,

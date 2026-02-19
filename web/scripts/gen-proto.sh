@@ -10,6 +10,7 @@ mkdir -p "${PROTO_ROOT}/agent/modules/cpu/pb"
 mkdir -p "${PROTO_ROOT}/agent/modules/gpu/pb"
 mkdir -p "${PROTO_ROOT}/agent/modules/memory/pb"
 mkdir -p "${PROTO_ROOT}/agent/modules/network/pb"
+mkdir -p "${PROTO_ROOT}/agent/modules/infiniband/pb"
 mkdir -p "${PROTO_ROOT}/agent/modules/process/pb"
 mkdir -p "${PROTO_ROOT}/agent/modules/storage/pb"
 
@@ -19,6 +20,7 @@ cp "${ROOT_DIR}/agent/modules/cpu/pb/cpu.proto" "${PROTO_ROOT}/agent/modules/cpu
 cp "${ROOT_DIR}/agent/modules/gpu/pb/gpu.proto" "${PROTO_ROOT}/agent/modules/gpu/pb/gpu.proto"
 cp "${ROOT_DIR}/agent/modules/memory/pb/memory.proto" "${PROTO_ROOT}/agent/modules/memory/pb/memory.proto"
 cp "${ROOT_DIR}/agent/modules/network/pb/network.proto" "${PROTO_ROOT}/agent/modules/network/pb/network.proto"
+cp "${ROOT_DIR}/agent/modules/infiniband/pb/infiniband.proto" "${PROTO_ROOT}/agent/modules/infiniband/pb/infiniband.proto"
 cp "${ROOT_DIR}/agent/modules/process/pb/process.proto" "${PROTO_ROOT}/agent/modules/process/pb/process.proto"
 cp "${ROOT_DIR}/agent/modules/storage/pb/storage.proto" "${PROTO_ROOT}/agent/modules/storage/pb/storage.proto"
 

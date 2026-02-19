@@ -21,6 +21,6 @@ ui-build:
 	rsync -a --delete web/out/ server/ui_dist/
 
 proto:
-	PATH="$(PATH):$$(go env GOPATH)/bin" protoc -I . --go_out=paths=source_relative:. agent/modules/cpu/pb/cpu.proto agent/modules/gpu/pb/gpu.proto agent/modules/memory/pb/memory.proto agent/modules/storage/pb/storage.proto agent/modules/network/pb/network.proto agent/modules/process/pb/process.proto
+	PATH="$(PATH):$$(go env GOPATH)/bin" protoc -I . --go_out=paths=source_relative:. agent/modules/cpu/pb/cpu.proto agent/modules/gpu/pb/gpu.proto agent/modules/memory/pb/memory.proto agent/modules/storage/pb/storage.proto agent/modules/network/pb/network.proto agent/modules/infiniband/pb/infiniband.proto agent/modules/process/pb/process.proto
 	PATH="$(PATH):$$(go env GOPATH)/bin" protoc -I . --go_out=paths=source_relative:. --go-grpc_out=paths=source_relative:. api/pb/telemetry.proto
 	PATH="$(PATH):$$(go env GOPATH)/bin" protoc -I . --go_out=paths=source_relative:. api/pb/http.proto
