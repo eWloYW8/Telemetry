@@ -474,7 +474,7 @@ export function RichControlSlider({
 
       {hasCurrentMarker ? (
         <div
-          className="absolute w-3 h-3 bg-yellow-500 rounded-full -translate-x-1/2 -translate-y-1/2 ring-2 ring-yellow-200 pointer-events-none"
+          className="absolute w-4 h-4 bg-yellow-500 rounded-full -translate-x-1/2 -translate-y-1/2 ring-[3px] ring-yellow-200 pointer-events-none"
           style={{ left: `${currentDisplayPercent ?? currentTargetPercent ?? 0}%`, top: "50%" }}
         >
           {showBadges && !shouldHideCurrentLabel ? (

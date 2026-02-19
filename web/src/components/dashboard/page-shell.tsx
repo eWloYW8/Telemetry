@@ -123,9 +123,17 @@ export function DashboardShell() {
           onSelectSettings={() => setSelectedNodeId(settingsViewID)}
         />
 
-        <main className="min-w-0 flex-1 space-y-3 lg:min-h-0 lg:overflow-auto">
+        <main
+          className={
+            powerSelected
+              ? "min-w-0 flex-1 lg:min-h-0 lg:overflow-hidden"
+              : "min-w-0 flex-1 space-y-3 lg:min-h-0 lg:overflow-auto"
+          }
+        >
           {powerSelected ? (
-            <PowerModuleView nodes={nodes} history={history} />
+            <div className="lg:h-full lg:min-h-0">
+              <PowerModuleView nodes={nodes} history={history} sendCommand={sendCommandWS} />
+            </div>
           ) : settingsSelected ? (
             <SettingsModuleView
               historyLimits={historyLimits}
