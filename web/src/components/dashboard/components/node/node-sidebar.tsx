@@ -61,7 +61,7 @@ export function NodeSidebar({
         "telemetry-panel flex flex-col overflow-hidden",
         collapsed
           ? "h-auto min-h-0 lg:h-full lg:min-h-0 lg:w-[58px] lg:min-w-[58px]"
-          : "h-[260px] min-h-[260px] lg:h-full lg:min-h-0 lg:w-[320px] lg:min-w-[320px]",
+          : "h-[44vh] min-h-[340px] max-h-[560px] lg:h-full lg:min-h-0 lg:max-h-none lg:w-[320px] lg:min-w-[320px]",
       )}
     >
       <div className={cn("telemetry-panel-header", collapsed && "hidden lg:block")}>
