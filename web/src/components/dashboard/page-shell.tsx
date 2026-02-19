@@ -11,12 +11,24 @@ import { GPUModuleView, gpuIndexesFromRegistration } from "./modules/gpu/module"
 import { MemoryModuleView } from "./modules/memory/module";
 import { NetworkModuleView } from "./modules/network/module";
 import { ProcessModuleView } from "./modules/process/module";
+import { SettingsModuleView } from "./modules/settings/module";
 import { StorageModuleView } from "./modules/storage/module";
 import { useTelemetryWS } from "./state/ws-client";
 import type { TabKey } from "./types";
 
+const settingsViewID = "__settings__";
+
 export function DashboardShell() {
-  const { wsConnected, nodes, history, sendCommand: sendCommandWS } = useTelemetryWS();
+  const {
+    wsConnected,
+    nodes,
+    history,
+    historyLimits,
+    minSampleIntervalMs,
+    setHistoryLimits,
+    setMinSampleIntervalMs,
+    sendCommand: sendCommandWS,
+  } = useTelemetryWS();
 
   const [selectedNodeId, setSelectedNodeId] = useState("");
   const [activeTab, setActiveTab] = useState<TabKey>("memory");
@@ -26,17 +38,19 @@ export function DashboardShell() {
 
   useEffect(() => {
     if (nodes.length === 0) {
-      if (selectedNodeId) setSelectedNodeId("");
+      if (selectedNodeId && selectedNodeId !== settingsViewID) setSelectedNodeId("");
       return;
     }
+    if (selectedNodeId === settingsViewID) return;
     if (!selectedNodeId || !nodes.some((n) => n.nodeId === selectedNodeId)) {
       setSelectedNodeId(nodes[0].nodeId);
     }
   }, [nodes, selectedNodeId]);
 
+  const settingsSelected = selectedNodeId === settingsViewID;
   const selectedNode = useMemo(
-    () => nodes.find((n) => n.nodeId === selectedNodeId) ?? null,
-    [nodes, selectedNodeId],
+    () => (settingsSelected ? null : nodes.find((n) => n.nodeId === selectedNodeId) ?? null),
+    [nodes, selectedNodeId, settingsSelected],
   );
 
   const registration = (selectedNode?.registration ?? null) as Record<string, any> | null;
@@ -96,10 +110,19 @@ export function DashboardShell() {
           nodes={nodes}
           selectedNodeId={selectedNodeId}
           onSelectNode={setSelectedNodeId}
+          settingsSelected={settingsSelected}
+          onSelectSettings={() => setSelectedNodeId(settingsViewID)}
         />
 
         <main className="min-w-0 flex-1 space-y-3 lg:min-h-0 lg:overflow-auto">
-          {!selectedNode ? (
+          {settingsSelected ? (
+            <SettingsModuleView
+              historyLimits={historyLimits}
+              minSampleIntervalMs={minSampleIntervalMs}
+              onSaveHistoryLimits={setHistoryLimits}
+              onSaveMinSampleIntervalMs={setMinSampleIntervalMs}
+            />
+          ) : !selectedNode ? (
             <div className="telemetry-empty p-6 text-sm">Select a node from the panel.</div>
           ) : (
             <Tabs value={activeTab} onValueChange={onChangeTopTab} className="space-y-3">
