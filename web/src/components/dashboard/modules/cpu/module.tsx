@@ -224,7 +224,7 @@ export function CPUModuleView({
       minKhz: Math.round(next[0]),
       maxKhz: Math.round(next[1]),
     });
-  }, 20);
+  }, 100);
 
   const uncoreControl = useThrottledEmitter<[number, number]>((next) => {
     sendCommand("cpu_uncore_range", {
@@ -232,7 +232,7 @@ export function CPUModuleView({
       minKhz: Math.round(next[0]),
       maxKhz: Math.round(next[1]),
     });
-  }, 20);
+  }, 100);
 
   const powerCapControl = useThrottledEmitter<number>((value) => {
     sendCommand("cpu_power_cap", {
@@ -240,14 +240,14 @@ export function CPUModuleView({
       microwatt: Math.round(clamp(value, cpuPowerSliderMin, cpuPowerSliderMax)),
       domain: "package",
     });
-  }, 20);
+  }, 100);
   const dramPowerCapControl = useThrottledEmitter<number>((value) => {
     sendCommand("cpu_power_cap", {
       packageId,
       microwatt: Math.round(clamp(value, dramPowerSliderMin, dramPowerSliderMax)),
       domain: "dram",
     });
-  }, 20);
+  }, 100);
 
   const governorControl = useThrottledEmitter<string>((value) => {
     sendCommand("cpu_governor", {

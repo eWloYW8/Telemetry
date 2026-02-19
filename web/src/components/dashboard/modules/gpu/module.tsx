@@ -116,14 +116,14 @@ export function GPUModuleView({
       memMinMhz: gpuCanTuneMem ? Math.round(range.mem[0]) : 0,
       memMaxMhz: gpuCanTuneMem ? Math.round(range.mem[1]) : 0,
     });
-  }, 20);
+  }, 100);
 
   const powerCapControl = useThrottledEmitter<number>((value) => {
     sendCommand("gpu_power_cap", {
       gpuIndex,
       milliwatt: Math.round(clamp(value, gpuPowerMinBound, gpuPowerMaxBound)),
     });
-  }, 20);
+  }, 100);
 
   useEffect(() => {
     if (isEditingClock) return;

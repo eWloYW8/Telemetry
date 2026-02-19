@@ -735,18 +735,307 @@ function dispatchControlCommand(
     });
 }
 
+type SelectionOption = {
+  id: string;
+  label: string;
+  scopeKey: string;
+};
+
+function useScopeSelection(options: SelectionOption[]) {
+  const optionById = useMemo(() => new Map(options.map((option) => [option.id, option])), [options]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    const valid = new Set(options.map((option) => option.id));
+    setSelectedIds((prev) => prev.filter((id) => valid.has(id)));
+  }, [options]);
+
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const selectedScopeKey = useMemo(() => {
+    for (const id of selectedIds) {
+      const found = optionById.get(id);
+      if (found) return found.scopeKey;
+    }
+    return null;
+  }, [selectedIds, optionById]);
+
+  const isSelected = (id: string) => selectedSet.has(id);
+  const isDisabled = (option: SelectionOption) =>
+    selectedScopeKey !== null && !selectedSet.has(option.id) && option.scopeKey !== selectedScopeKey;
+
+  const toggle = (option: SelectionOption, checked: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) {
+        const lockedScope =
+          prev.map((id) => optionById.get(id)?.scopeKey).find((scope): scope is string => Boolean(scope)) ?? null;
+        if (lockedScope !== null && lockedScope !== option.scopeKey) return prev;
+        next.add(option.id);
+      } else {
+        next.delete(option.id);
+      }
+      return Array.from(next);
+    });
+  };
+
+  return { selectedIds, selectedSet, selectedScopeKey, isSelected, isDisabled, toggle };
+}
+
+function avgOf<T>(items: T[], getter: (item: T) => number): number | null {
+  if (items.length === 0) return null;
+  let sum = 0;
+  let count = 0;
+  for (const item of items) {
+    const value = getter(item);
+    if (!Number.isFinite(value)) continue;
+    sum += value;
+    count += 1;
+  }
+  return count > 0 ? sum / count : null;
+}
+
+function avgRangeOf<T>(items: T[], getLo: (item: T) => number, getHi: (item: T) => number): [number, number] | null {
+  if (items.length === 0) return null;
+  let loSum = 0;
+  let hiSum = 0;
+  let count = 0;
+  for (const item of items) {
+    const lo = getLo(item);
+    const hi = getHi(item);
+    if (!Number.isFinite(lo) || !Number.isFinite(hi)) continue;
+    loSum += lo;
+    hiSum += hi;
+    count += 1;
+  }
+  if (count <= 0) return null;
+  return [loSum / count, hiSum / count];
+}
+
+function selectionSignature(ids: string[]): string {
+  return ids.slice().sort().join("|");
+}
+
+function SelectionChips({
+  options,
+  selection,
+}: {
+  options: SelectionOption[];
+  selection: ReturnType<typeof useScopeSelection>;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      {options.map((option) => {
+        const checked = selection.isSelected(option.id);
+        const disabled = selection.isDisabled(option);
+        return (
+          <label
+            key={`chip-${option.id}`}
+            className={`inline-flex items-center gap-1 whitespace-nowrap text-xs ${disabled ? "text-[var(--telemetry-muted-fg)] opacity-60" : "text-[var(--telemetry-text)]"}`}
+          >
+            <input
+              type="checkbox"
+              className="h-3.5 w-3.5 accent-[var(--telemetry-accent)]"
+              checked={checked}
+              disabled={disabled}
+              onChange={(ev) => selection.toggle(option, ev.target.checked)}
+            />
+            <span>{option.label}</span>
+          </label>
+        );
+      })}
+    </div>
+  );
+}
+
+function BatchControlSlider({
+  title,
+  min,
+  max,
+  step,
+  initialValue,
+  currentValue,
+  valueFormatter,
+  tickFormatter,
+  enabled,
+  onApply,
+}: {
+  title: string;
+  min: number;
+  max: number;
+  step: number;
+  initialValue: number | null;
+  currentValue: number | null;
+  valueFormatter: (value: number) => string;
+  tickFormatter: (value: number) => string;
+  enabled: boolean;
+  onApply: (value: number) => void;
+}) {
+  const normalizedMin = Math.min(min, max);
+  const normalizedMax = Math.max(min, max);
+  const normalizedInitialValue = clamp(
+    initialValue !== null && Number.isFinite(initialValue) ? initialValue : normalizedMin,
+    normalizedMin,
+    normalizedMax,
+  );
+
+  const [value, setValue] = useState(normalizedInitialValue);
+  const [isEditing, setIsEditing] = useState(false);
+
+  useEffect(() => {
+    if (isEditing) return;
+    setValue((prev) => (Math.abs(prev - normalizedInitialValue) < 1 ? prev : normalizedInitialValue));
+  }, [isEditing, normalizedInitialValue]);
+
+  const control = useThrottledEmitter<number>((next) => onApply(next), 100);
+
+  return (
+    <div className="space-y-1.5 border-t border-[var(--telemetry-border-subtle)] pt-2">
+      <div className="text-xs font-semibold text-[var(--telemetry-muted-fg)]">
+        {title} {enabled ? "" : "(select one or more items)"}
+      </div>
+      <RichControlSlider
+        min={normalizedMin}
+        max={normalizedMax}
+        step={step}
+        value={[value]}
+        currentValue={currentValue}
+        valueFormatter={valueFormatter}
+        tickFormatter={tickFormatter}
+        disabled={!enabled}
+        onValueChange={(v) => {
+          if (!enabled) return;
+          const next = clamp(v[0] ?? value, normalizedMin, normalizedMax);
+          setIsEditing(true);
+          setValue(next);
+          control.send(next);
+        }}
+        onValueCommit={(v) => {
+          if (!enabled) return;
+          const next = clamp(v[0] ?? value, normalizedMin, normalizedMax);
+          setValue(next);
+          control.flush(next);
+          setIsEditing(false);
+        }}
+      />
+    </div>
+  );
+}
+
+function BatchRangeControlSlider({
+  title,
+  min,
+  max,
+  step,
+  currentRange,
+  currentValue,
+  resetKey,
+  valueFormatter,
+  tickFormatter,
+  enabled,
+  onRangeChange,
+  onApply,
+}: {
+  title: string;
+  min: number;
+  max: number;
+  step: number;
+  currentRange: [number, number] | null;
+  currentValue: number | null;
+  resetKey: string;
+  valueFormatter: (value: number) => string;
+  tickFormatter: (value: number) => string;
+  enabled: boolean;
+  onRangeChange?: (range: [number, number]) => void;
+  onApply: (range: [number, number]) => void;
+}) {
+  const normalizedMin = Math.min(min, max);
+  const normalizedMax = Math.max(min, max);
+  const sourceLo = currentRange?.[0] ?? normalizedMin;
+  const sourceHi = currentRange?.[1] ?? normalizedMax;
+  const initialRange: [number, number] = [
+    clamp(Math.min(sourceLo, sourceHi), normalizedMin, normalizedMax),
+    clamp(Math.max(sourceLo, sourceHi), normalizedMin, normalizedMax),
+  ];
+
+  const [range, setRange] = useState<[number, number]>(initialRange);
+
+  useEffect(() => {
+    if (!currentRange) return;
+    const next: [number, number] = [
+      clamp(Math.min(currentRange[0], currentRange[1]), normalizedMin, normalizedMax),
+      clamp(Math.max(currentRange[0], currentRange[1]), normalizedMin, normalizedMax),
+    ];
+    setRange(next);
+  }, [resetKey, currentRange, normalizedMin, normalizedMax]);
+
+  const control = useThrottledEmitter<[number, number]>((next) => onApply(next), 100);
+
+  return (
+    <div className="space-y-1.5 border-t border-[var(--telemetry-border-subtle)] pt-2">
+      <div className="text-xs font-semibold text-[var(--telemetry-muted-fg)]">
+        {title} {enabled ? "" : "(select one or more items)"}
+      </div>
+      <RichControlSlider
+        min={normalizedMin}
+        max={normalizedMax}
+        step={step}
+        value={range}
+        currentValue={currentValue}
+        valueFormatter={valueFormatter}
+        tickFormatter={tickFormatter}
+        disabled={!enabled}
+        onValueChange={(v) => {
+          if (!enabled) return;
+          const next: [number, number] = [
+            clamp(v[0] ?? range[0], normalizedMin, normalizedMax),
+            clamp(v[1] ?? range[1], normalizedMin, normalizedMax),
+          ];
+          const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
+          setRange(fixed);
+          onRangeChange?.(fixed);
+          control.send(fixed);
+        }}
+        onValueCommit={(v) => {
+          if (!enabled) return;
+          const next: [number, number] = [
+            clamp(v[0] ?? range[0], normalizedMin, normalizedMax),
+            clamp(v[1] ?? range[1], normalizedMin, normalizedMax),
+          ];
+          const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
+          setRange(fixed);
+          onRangeChange?.(fixed);
+          control.flush(fixed);
+        }}
+      />
+    </div>
+  );
+}
+
 function CpuCoreRangeControlItem({
   device,
   sendCommand,
+  option,
+  selected,
+  forcedRange,
+  selectionDisabled,
+  onToggleSelection,
+  showControls,
 }: {
   device: CpuControlDevice;
   sendCommand: PowerModuleViewProps["sendCommand"];
+  option: SelectionOption;
+  selected: boolean;
+  forcedRange: [number, number] | null;
+  selectionDisabled: boolean;
+  onToggleSelection: (checked: boolean) => void;
+  showControls: boolean;
 }) {
   const [range, setRange] = useState<[number, number]>([device.scalingCurrentMin, device.scalingCurrentMax]);
   const [isEditing, setIsEditing] = useState(false);
   const syncBlockUntilRef = useRef(0);
 
   useEffect(() => {
+    if (selected && forcedRange) return;
     if (isEditing) return;
     if (Date.now() < syncBlockUntilRef.current) return;
     const lo = clamp(device.scalingCurrentMin, device.scalingMinBound, device.scalingMaxBound);
@@ -758,7 +1047,16 @@ function CpuCoreRangeControlItem({
     device.scalingCurrentMax,
     device.scalingMinBound,
     device.scalingMaxBound,
+    selected,
+    forcedRange,
   ]);
+
+  useEffect(() => {
+    if (!selected || !forcedRange) return;
+    const lo = clamp(Math.min(forcedRange[0], forcedRange[1]), device.scalingMinBound, device.scalingMaxBound);
+    const hi = clamp(Math.max(forcedRange[0], forcedRange[1]), device.scalingMinBound, device.scalingMaxBound);
+    setRange((prev) => (Math.abs(prev[0] - lo) < 1 && Math.abs(prev[1] - hi) < 1 ? prev : [lo, hi]));
+  }, [selected, forcedRange, device.scalingMinBound, device.scalingMaxBound]);
 
   const control = useThrottledEmitter<[number, number]>((next) => {
     dispatchControlCommand(sendCommand, device.nodeId, "cpu_scaling_range", {
@@ -766,42 +1064,56 @@ function CpuCoreRangeControlItem({
       minKhz: Math.round(next[0]),
       maxKhz: Math.round(next[1]),
     });
-  }, 20);
+  }, 100);
 
   return (
     <div className="space-y-1.5">
-      <div className="mb-1 text-sm font-medium text-[var(--telemetry-text)]">{device.label}</div>
-      <RichControlSlider
-        min={device.scalingMinBound}
-        max={device.scalingMaxBound}
-        step={1000}
-        value={range}
-        currentValue={device.scalingCurrentKhz > 0 ? device.scalingCurrentKhz : null}
-        valueFormatter={(value) => formatKHz(value)}
-        tickFormatter={(value) => formatNumber(value / 1000, 0)}
-        majorTickStep={100_000}
-        onValueChange={(v) => {
-          const next: [number, number] = [
-            clamp(v[0] ?? range[0], device.scalingMinBound, device.scalingMaxBound),
-            clamp(v[1] ?? range[1], device.scalingMinBound, device.scalingMaxBound),
-          ];
-          const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
-          setIsEditing(true);
-          setRange(fixed);
-          control.send(fixed);
-        }}
-        onValueCommit={(v) => {
-          const next: [number, number] = [
-            clamp(v[0] ?? range[0], device.scalingMinBound, device.scalingMaxBound),
-            clamp(v[1] ?? range[1], device.scalingMinBound, device.scalingMaxBound),
-          ];
-          const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
-          setRange(fixed);
-          control.flush(fixed);
-          syncBlockUntilRef.current = Date.now() + 200;
-          setIsEditing(false);
-        }}
-      />
+      <label
+        className={`mb-1 inline-flex items-center gap-2 text-sm font-medium ${selectionDisabled ? "text-[var(--telemetry-muted-fg)] opacity-70" : "text-[var(--telemetry-text)]"}`}
+      >
+        <input
+          type="checkbox"
+          className="h-4 w-4 accent-[var(--telemetry-accent)]"
+          checked={selected}
+          disabled={selectionDisabled}
+          onChange={(ev) => onToggleSelection(ev.target.checked)}
+        />
+        <span>{option.label}</span>
+      </label>
+      {showControls ? (
+        <RichControlSlider
+          min={device.scalingMinBound}
+          max={device.scalingMaxBound}
+          step={1000}
+          value={range}
+          currentValue={device.scalingCurrentKhz > 0 ? device.scalingCurrentKhz : null}
+          valueFormatter={(value) => formatKHz(value)}
+          tickFormatter={(value) => formatNumber(value / 1000, 0)}
+          majorTickStep={100_000}
+          disabled={Boolean(selected && forcedRange)}
+          onValueChange={(v) => {
+            const next: [number, number] = [
+              clamp(v[0] ?? range[0], device.scalingMinBound, device.scalingMaxBound),
+              clamp(v[1] ?? range[1], device.scalingMinBound, device.scalingMaxBound),
+            ];
+            const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
+            setIsEditing(true);
+            setRange(fixed);
+            control.send(fixed);
+          }}
+          onValueCommit={(v) => {
+            const next: [number, number] = [
+              clamp(v[0] ?? range[0], device.scalingMinBound, device.scalingMaxBound),
+              clamp(v[1] ?? range[1], device.scalingMinBound, device.scalingMaxBound),
+            ];
+            const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
+            setRange(fixed);
+            control.flush(fixed);
+            syncBlockUntilRef.current = Date.now() + 200;
+            setIsEditing(false);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -809,9 +1121,21 @@ function CpuCoreRangeControlItem({
 function CpuUncoreRangeControlItem({
   device,
   sendCommand,
+  option,
+  selected,
+  forcedRange,
+  selectionDisabled,
+  onToggleSelection,
+  showControls,
 }: {
   device: CpuControlDevice;
   sendCommand: PowerModuleViewProps["sendCommand"];
+  option: SelectionOption;
+  selected: boolean;
+  forcedRange: [number, number] | null;
+  selectionDisabled: boolean;
+  onToggleSelection: (checked: boolean) => void;
+  showControls: boolean;
 }) {
   const [range, setRange] = useState<[number, number]>([device.uncoreCurrentMin, device.uncoreCurrentMax]);
   const [isEditing, setIsEditing] = useState(false);
@@ -819,6 +1143,7 @@ function CpuUncoreRangeControlItem({
 
   useEffect(() => {
     if (!device.canTuneUncore) return;
+    if (selected && forcedRange) return;
     if (isEditing) return;
     if (Date.now() < syncBlockUntilRef.current) return;
     const lo = clamp(device.uncoreCurrentMin, device.uncoreMinBound, device.uncoreMaxBound);
@@ -831,7 +1156,16 @@ function CpuUncoreRangeControlItem({
     device.uncoreCurrentMax,
     device.uncoreMinBound,
     device.uncoreMaxBound,
+    selected,
+    forcedRange,
   ]);
+
+  useEffect(() => {
+    if (!device.canTuneUncore || !selected || !forcedRange) return;
+    const lo = clamp(Math.min(forcedRange[0], forcedRange[1]), device.uncoreMinBound, device.uncoreMaxBound);
+    const hi = clamp(Math.max(forcedRange[0], forcedRange[1]), device.uncoreMinBound, device.uncoreMaxBound);
+    setRange((prev) => (Math.abs(prev[0] - lo) < 1 && Math.abs(prev[1] - hi) < 1 ? prev : [lo, hi]));
+  }, [device.canTuneUncore, selected, forcedRange, device.uncoreMinBound, device.uncoreMaxBound]);
 
   const control = useThrottledEmitter<[number, number]>((next) => {
     dispatchControlCommand(sendCommand, device.nodeId, "cpu_uncore_range", {
@@ -839,44 +1173,58 @@ function CpuUncoreRangeControlItem({
       minKhz: Math.round(next[0]),
       maxKhz: Math.round(next[1]),
     });
-  }, 20);
+  }, 100);
 
   if (!device.canTuneUncore) return null;
 
   return (
     <div className="space-y-1.5">
-      <div className="mb-1 text-sm font-medium text-[var(--telemetry-text)]">{device.label}</div>
-      <RichControlSlider
-        min={device.uncoreMinBound}
-        max={device.uncoreMaxBound}
-        step={1000}
-        value={range}
-        currentValue={device.uncoreCurrentKhz > 0 ? device.uncoreCurrentKhz : null}
-        valueFormatter={(value) => formatKHz(value)}
-        tickFormatter={(value) => formatNumber(value / 1000, 0)}
-        majorTickStep={100_000}
-        onValueChange={(v) => {
-          const next: [number, number] = [
-            clamp(v[0] ?? range[0], device.uncoreMinBound, device.uncoreMaxBound),
-            clamp(v[1] ?? range[1], device.uncoreMinBound, device.uncoreMaxBound),
-          ];
-          const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
-          setIsEditing(true);
-          setRange(fixed);
-          control.send(fixed);
-        }}
-        onValueCommit={(v) => {
-          const next: [number, number] = [
-            clamp(v[0] ?? range[0], device.uncoreMinBound, device.uncoreMaxBound),
-            clamp(v[1] ?? range[1], device.uncoreMinBound, device.uncoreMaxBound),
-          ];
-          const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
-          setRange(fixed);
-          control.flush(fixed);
-          syncBlockUntilRef.current = Date.now() + 200;
-          setIsEditing(false);
-        }}
-      />
+      <label
+        className={`mb-1 inline-flex items-center gap-2 text-sm font-medium ${selectionDisabled ? "text-[var(--telemetry-muted-fg)] opacity-70" : "text-[var(--telemetry-text)]"}`}
+      >
+        <input
+          type="checkbox"
+          className="h-4 w-4 accent-[var(--telemetry-accent)]"
+          checked={selected}
+          disabled={selectionDisabled}
+          onChange={(ev) => onToggleSelection(ev.target.checked)}
+        />
+        <span>{option.label}</span>
+      </label>
+      {showControls ? (
+        <RichControlSlider
+          min={device.uncoreMinBound}
+          max={device.uncoreMaxBound}
+          step={1000}
+          value={range}
+          currentValue={device.uncoreCurrentKhz > 0 ? device.uncoreCurrentKhz : null}
+          valueFormatter={(value) => formatKHz(value)}
+          tickFormatter={(value) => formatNumber(value / 1000, 0)}
+          majorTickStep={100_000}
+          disabled={Boolean(selected && forcedRange)}
+          onValueChange={(v) => {
+            const next: [number, number] = [
+              clamp(v[0] ?? range[0], device.uncoreMinBound, device.uncoreMaxBound),
+              clamp(v[1] ?? range[1], device.uncoreMinBound, device.uncoreMaxBound),
+            ];
+            const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
+            setIsEditing(true);
+            setRange(fixed);
+            control.send(fixed);
+          }}
+          onValueCommit={(v) => {
+            const next: [number, number] = [
+              clamp(v[0] ?? range[0], device.uncoreMinBound, device.uncoreMaxBound),
+              clamp(v[1] ?? range[1], device.uncoreMinBound, device.uncoreMaxBound),
+            ];
+            const fixed: [number, number] = [Math.min(next[0], next[1]), Math.max(next[0], next[1])];
+            setRange(fixed);
+            control.flush(fixed);
+            syncBlockUntilRef.current = Date.now() + 200;
+            setIsEditing(false);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -885,10 +1233,20 @@ function CpuPowerCapControlItem({
   device,
   domain,
   sendCommand,
+  option,
+  selected,
+  selectionDisabled,
+  onToggleSelection,
+  showControls,
 }: {
   device: CpuControlDevice;
   domain: "package" | "dram";
   sendCommand: PowerModuleViewProps["sendCommand"];
+  option: SelectionOption;
+  selected: boolean;
+  selectionDisabled: boolean;
+  onToggleSelection: (checked: boolean) => void;
+  showControls: boolean;
 }) {
   const minBound = domain === "package" ? device.packagePowerMinMicroW : device.dramPowerMinMicroW;
   const maxBound = domain === "package" ? device.packagePowerMaxMicroW : device.dramPowerMaxMicroW;
@@ -917,33 +1275,46 @@ function CpuPowerCapControlItem({
       microwatt: Math.round(clamp(value, minBound, maxBound)),
       domain,
     });
-  }, 20);
+  }, 100);
 
   return (
     <div className="space-y-1.5">
-      <div className="mb-1 text-sm font-medium text-[var(--telemetry-text)]">{device.label}</div>
-      <RichControlSlider
-        min={minBound}
-        max={maxBound}
-        step={1000}
-        value={[cap]}
-        currentValue={currentUsage > 0 ? currentUsage : null}
-        valueFormatter={(value) => formatPowerMicroW(value)}
-        tickFormatter={(value) => formatNumber(value / 1_000_000, 0)}
-        onValueChange={(v) => {
-          const next = clamp(v[0] ?? cap, minBound, maxBound);
-          setIsEditing(true);
-          setCap(next);
-          control.send(next);
-        }}
-        onValueCommit={(v) => {
-          const next = clamp(v[0] ?? cap, minBound, maxBound);
-          setCap(next);
-          control.flush(next);
-          syncBlockUntilRef.current = Date.now() + 200;
-          setIsEditing(false);
-        }}
-      />
+      <label
+        className={`mb-1 inline-flex items-center gap-2 text-sm font-medium ${selectionDisabled ? "text-[var(--telemetry-muted-fg)] opacity-70" : "text-[var(--telemetry-text)]"}`}
+      >
+        <input
+          type="checkbox"
+          className="h-4 w-4 accent-[var(--telemetry-accent)]"
+          checked={selected}
+          disabled={selectionDisabled}
+          onChange={(ev) => onToggleSelection(ev.target.checked)}
+        />
+        <span>{option.label}</span>
+      </label>
+      {showControls ? (
+        <RichControlSlider
+          min={minBound}
+          max={maxBound}
+          step={1000}
+          value={[cap]}
+          currentValue={currentUsage > 0 ? currentUsage : null}
+          valueFormatter={(value) => formatPowerMicroW(value)}
+          tickFormatter={(value) => formatNumber(value / 1_000_000, 0)}
+          onValueChange={(v) => {
+            const next = clamp(v[0] ?? cap, minBound, maxBound);
+            setIsEditing(true);
+            setCap(next);
+            control.send(next);
+          }}
+          onValueCommit={(v) => {
+            const next = clamp(v[0] ?? cap, minBound, maxBound);
+            setCap(next);
+            control.flush(next);
+            syncBlockUntilRef.current = Date.now() + 200;
+            setIsEditing(false);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -951,9 +1322,23 @@ function CpuPowerCapControlItem({
 function GpuClockRangeControlItem({
   device,
   sendCommand,
+  option,
+  selected,
+  forcedSmRange,
+  forcedMemRange,
+  selectionDisabled,
+  onToggleSelection,
+  showControls,
 }: {
   device: GpuControlDevice;
   sendCommand: PowerModuleViewProps["sendCommand"];
+  option: SelectionOption;
+  selected: boolean;
+  forcedSmRange: [number, number] | null;
+  forcedMemRange: [number, number] | null;
+  selectionDisabled: boolean;
+  onToggleSelection: (checked: boolean) => void;
+  showControls: boolean;
 }) {
   const [smRange, setSmRange] = useState<[number, number]>([device.smCurrentMin, device.smCurrentMax]);
   const [memRange, setMemRange] = useState<[number, number]>([device.memCurrentMin, device.memCurrentMax]);
@@ -961,6 +1346,8 @@ function GpuClockRangeControlItem({
   const syncBlockUntilRef = useRef(0);
 
   useEffect(() => {
+    const hasForced = (device.canTuneSM && selected && forcedSmRange) || (device.canTuneMem && selected && forcedMemRange);
+    if (hasForced) return;
     if (isEditing) return;
     if (Date.now() < syncBlockUntilRef.current) return;
 
@@ -991,7 +1378,24 @@ function GpuClockRangeControlItem({
     device.smMaxBound,
     device.memMinBound,
     device.memMaxBound,
+    selected,
+    forcedSmRange,
+    forcedMemRange,
   ]);
+
+  useEffect(() => {
+    if (!device.canTuneSM || !selected || !forcedSmRange) return;
+    const lo = clamp(Math.min(forcedSmRange[0], forcedSmRange[1]), device.smMinBound, device.smMaxBound);
+    const hi = clamp(Math.max(forcedSmRange[0], forcedSmRange[1]), device.smMinBound, device.smMaxBound);
+    setSmRange((prev) => (Math.abs(prev[0] - lo) < 1 && Math.abs(prev[1] - hi) < 1 ? prev : [lo, hi]));
+  }, [device.canTuneSM, selected, forcedSmRange, device.smMinBound, device.smMaxBound]);
+
+  useEffect(() => {
+    if (!device.canTuneMem || !selected || !forcedMemRange) return;
+    const lo = clamp(Math.min(forcedMemRange[0], forcedMemRange[1]), device.memMinBound, device.memMaxBound);
+    const hi = clamp(Math.max(forcedMemRange[0], forcedMemRange[1]), device.memMinBound, device.memMaxBound);
+    setMemRange((prev) => (Math.abs(prev[0] - lo) < 1 && Math.abs(prev[1] - hi) < 1 ? prev : [lo, hi]));
+  }, [device.canTuneMem, selected, forcedMemRange, device.memMinBound, device.memMaxBound]);
 
   const control = useThrottledEmitter<{ sm: [number, number]; mem: [number, number] }>((range) => {
     dispatchControlCommand(sendCommand, device.nodeId, "gpu_clock_range", {
@@ -1001,15 +1405,26 @@ function GpuClockRangeControlItem({
       memMinMhz: device.canTuneMem ? Math.round(range.mem[0]) : 0,
       memMaxMhz: device.canTuneMem ? Math.round(range.mem[1]) : 0,
     });
-  }, 20);
+  }, 100);
 
   if (!device.canTuneSM && !device.canTuneMem) return null;
 
   return (
     <div className="space-y-1.5">
-      <div className="mb-1 text-sm font-medium text-[var(--telemetry-text)]">{device.label}</div>
+      <label
+        className={`mb-1 inline-flex items-center gap-2 text-sm font-medium ${selectionDisabled ? "text-[var(--telemetry-muted-fg)] opacity-70" : "text-[var(--telemetry-text)]"}`}
+      >
+        <input
+          type="checkbox"
+          className="h-4 w-4 accent-[var(--telemetry-accent)]"
+          checked={selected}
+          disabled={selectionDisabled}
+          onChange={(ev) => onToggleSelection(ev.target.checked)}
+        />
+        <span>{option.label}</span>
+      </label>
 
-      {device.canTuneSM ? (
+      {showControls && device.canTuneSM ? (
         <div className="mb-1.5">
           <RichControlSlider
             min={device.smMinBound}
@@ -1019,6 +1434,7 @@ function GpuClockRangeControlItem({
             currentValue={device.smCurrentClock > 0 ? device.smCurrentClock : null}
             valueFormatter={(value) => `${formatNumber(value)} MHz`}
             tickFormatter={(value) => formatNumber(value, 0)}
+            disabled={Boolean(selected && forcedSmRange)}
             onValueChange={(v) => {
               const next: [number, number] = [
                 clamp(v[0] ?? smRange[0], device.smMinBound, device.smMaxBound),
@@ -1044,7 +1460,7 @@ function GpuClockRangeControlItem({
         </div>
       ) : null}
 
-      {device.canTuneMem ? (
+      {showControls && device.canTuneMem ? (
         <div>
           <div className="mb-0.5 text-sm text-[var(--telemetry-muted-fg)]">
             Memory Clock {formatNumber(memRange[0])} ~ {formatNumber(memRange[1])} MHz
@@ -1057,6 +1473,7 @@ function GpuClockRangeControlItem({
             currentValue={device.memCurrentClock > 0 ? device.memCurrentClock : null}
             valueFormatter={(value) => `${formatNumber(value)} MHz`}
             tickFormatter={(value) => formatNumber(value, 0)}
+            disabled={Boolean(selected && forcedMemRange)}
             onValueChange={(v) => {
               const next: [number, number] = [
                 clamp(v[0] ?? memRange[0], device.memMinBound, device.memMaxBound),
@@ -1088,9 +1505,19 @@ function GpuClockRangeControlItem({
 function GpuPowerCapControlItem({
   device,
   sendCommand,
+  option,
+  selected,
+  selectionDisabled,
+  onToggleSelection,
+  showControls,
 }: {
   device: GpuControlDevice;
   sendCommand: PowerModuleViewProps["sendCommand"];
+  option: SelectionOption;
+  selected: boolean;
+  selectionDisabled: boolean;
+  onToggleSelection: (checked: boolean) => void;
+  showControls: boolean;
 }) {
   const [cap, setCap] = useState(device.powerCurrentCapMilliW);
   const [isEditing, setIsEditing] = useState(false);
@@ -1108,33 +1535,46 @@ function GpuPowerCapControlItem({
       gpuIndex: device.gpuIndex,
       milliwatt: Math.round(clamp(value, device.powerMinMilliW, device.powerMaxMilliW)),
     });
-  }, 20);
+  }, 100);
 
   return (
     <div className="space-y-1.5">
-      <div className="mb-1 text-sm font-medium text-[var(--telemetry-text)]">{device.label}</div>
-      <RichControlSlider
-        min={device.powerMinMilliW}
-        max={device.powerMaxMilliW}
-        step={1}
-        value={[cap]}
-        currentValue={device.powerCurrentUsageMilliW > 0 ? device.powerCurrentUsageMilliW : null}
-        valueFormatter={(value) => formatPowerMilliW(value)}
-        tickFormatter={(value) => formatNumber(value / 1000, 0)}
-        onValueChange={(v) => {
-          const next = clamp(v[0] ?? cap, device.powerMinMilliW, device.powerMaxMilliW);
-          setIsEditing(true);
-          setCap(next);
-          control.send(next);
-        }}
-        onValueCommit={(v) => {
-          const next = clamp(v[0] ?? cap, device.powerMinMilliW, device.powerMaxMilliW);
-          setCap(next);
-          control.flush(next);
-          syncBlockUntilRef.current = Date.now() + 200;
-          setIsEditing(false);
-        }}
-      />
+      <label
+        className={`mb-1 inline-flex items-center gap-2 text-sm font-medium ${selectionDisabled ? "text-[var(--telemetry-muted-fg)] opacity-70" : "text-[var(--telemetry-text)]"}`}
+      >
+        <input
+          type="checkbox"
+          className="h-4 w-4 accent-[var(--telemetry-accent)]"
+          checked={selected}
+          disabled={selectionDisabled}
+          onChange={(ev) => onToggleSelection(ev.target.checked)}
+        />
+        <span>{option.label}</span>
+      </label>
+      {showControls ? (
+        <RichControlSlider
+          min={device.powerMinMilliW}
+          max={device.powerMaxMilliW}
+          step={1}
+          value={[cap]}
+          currentValue={device.powerCurrentUsageMilliW > 0 ? device.powerCurrentUsageMilliW : null}
+          valueFormatter={(value) => formatPowerMilliW(value)}
+          tickFormatter={(value) => formatNumber(value / 1000, 0)}
+          onValueChange={(v) => {
+            const next = clamp(v[0] ?? cap, device.powerMinMilliW, device.powerMaxMilliW);
+            setIsEditing(true);
+            setCap(next);
+            control.send(next);
+          }}
+          onValueCommit={(v) => {
+            const next = clamp(v[0] ?? cap, device.powerMinMilliW, device.powerMaxMilliW);
+            setCap(next);
+            control.flush(next);
+            syncBlockUntilRef.current = Date.now() + 200;
+            setIsEditing(false);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -1147,7 +1587,7 @@ function ControlGroup({
 }: {
   title: string;
   description?: string;
-  children: ReactNode;
+  children: (open: boolean) => ReactNode;
   defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -1170,7 +1610,7 @@ function ControlGroup({
         </button>
       }
     >
-      <div className={open ? "space-y-2" : "hidden"}>{children}</div>
+      <div className="space-y-2">{children(open)}</div>
     </Section>
   );
 }
@@ -1204,6 +1644,182 @@ export function PowerModuleView({ nodes, history, sendCommand }: PowerModuleView
     () => gpuControlDevices.filter((d) => d.canTuneSM || d.canTuneMem),
     [gpuControlDevices],
   );
+  const cpuCoreOptions = useMemo(
+    () =>
+      cpuControlDevices.map((device) => ({
+        id: device.id,
+        label: device.label,
+        scopeKey: `${device.scalingMinBound}:${device.scalingMaxBound}:1000`,
+      })),
+    [cpuControlDevices],
+  );
+  const cpuUncoreOptions = useMemo(
+    () =>
+      cpuUncoreDevices.map((device) => ({
+        id: device.id,
+        label: device.label,
+        scopeKey: `${device.uncoreMinBound}:${device.uncoreMaxBound}:1000`,
+      })),
+    [cpuUncoreDevices],
+  );
+  const cpuPackageCapOptions = useMemo(
+    () =>
+      cpuControlDevices.map((device) => ({
+        id: device.id,
+        label: device.label,
+        scopeKey: `${device.packagePowerMinMicroW}:${device.packagePowerMaxMicroW}:1000`,
+      })),
+    [cpuControlDevices],
+  );
+  const cpuDramCapOptions = useMemo(
+    () =>
+      cpuDramCapDevices.map((device) => ({
+        id: device.id,
+        label: device.label,
+        scopeKey: `${device.dramPowerMinMicroW}:${device.dramPowerMaxMicroW}:1000`,
+      })),
+    [cpuDramCapDevices],
+  );
+  const gpuClockOptions = useMemo(
+    () =>
+      gpuClockDevices.map((device) => ({
+        id: device.id,
+        label: device.label,
+        scopeKey: `sm:${device.canTuneSM ? `${device.smMinBound}-${device.smMaxBound}` : "x"}|mem:${device.canTuneMem ? `${device.memMinBound}-${device.memMaxBound}` : "x"}`,
+      })),
+    [gpuClockDevices],
+  );
+  const gpuPowerOptions = useMemo(
+    () =>
+      gpuControlDevices.map((device) => ({
+        id: device.id,
+        label: device.label,
+        scopeKey: `${device.powerMinMilliW}:${device.powerMaxMilliW}:1`,
+      })),
+    [gpuControlDevices],
+  );
+
+  const cpuCoreSelection = useScopeSelection(cpuCoreOptions);
+  const cpuUncoreSelection = useScopeSelection(cpuUncoreOptions);
+  const cpuPackageCapSelection = useScopeSelection(cpuPackageCapOptions);
+  const cpuDramCapSelection = useScopeSelection(cpuDramCapOptions);
+  const gpuClockSelection = useScopeSelection(gpuClockOptions);
+  const gpuPowerSelection = useScopeSelection(gpuPowerOptions);
+
+  const cpuCoreOptionMap = useMemo(() => new Map(cpuCoreOptions.map((option) => [option.id, option])), [cpuCoreOptions]);
+  const cpuUncoreOptionMap = useMemo(
+    () => new Map(cpuUncoreOptions.map((option) => [option.id, option])),
+    [cpuUncoreOptions],
+  );
+  const cpuPackageCapOptionMap = useMemo(
+    () => new Map(cpuPackageCapOptions.map((option) => [option.id, option])),
+    [cpuPackageCapOptions],
+  );
+  const cpuDramCapOptionMap = useMemo(
+    () => new Map(cpuDramCapOptions.map((option) => [option.id, option])),
+    [cpuDramCapOptions],
+  );
+  const gpuClockOptionMap = useMemo(
+    () => new Map(gpuClockOptions.map((option) => [option.id, option])),
+    [gpuClockOptions],
+  );
+  const gpuPowerOptionMap = useMemo(
+    () => new Map(gpuPowerOptions.map((option) => [option.id, option])),
+    [gpuPowerOptions],
+  );
+
+  const cpuCoreSelectedDevices = cpuControlDevices.filter((device) => cpuCoreSelection.selectedSet.has(device.id));
+  const cpuUncoreSelectedDevices = cpuUncoreDevices.filter((device) => cpuUncoreSelection.selectedSet.has(device.id));
+  const cpuPackageCapSelectedDevices = cpuControlDevices.filter((device) =>
+    cpuPackageCapSelection.selectedSet.has(device.id),
+  );
+  const cpuDramCapSelectedDevices = cpuDramCapDevices.filter((device) => cpuDramCapSelection.selectedSet.has(device.id));
+  const gpuClockSelectedDevices = gpuClockDevices.filter((device) => gpuClockSelection.selectedSet.has(device.id));
+  const gpuPowerSelectedDevices = gpuControlDevices.filter((device) => gpuPowerSelection.selectedSet.has(device.id));
+
+  const cpuCoreBatchSource = cpuCoreSelectedDevices[0] ?? cpuControlDevices[0] ?? null;
+  const cpuUncoreBatchSource = cpuUncoreSelectedDevices[0] ?? cpuUncoreDevices[0] ?? null;
+  const cpuPackageCapBatchSource = cpuPackageCapSelectedDevices[0] ?? cpuControlDevices[0] ?? null;
+  const cpuDramCapBatchSource = cpuDramCapSelectedDevices[0] ?? cpuDramCapDevices[0] ?? null;
+  const gpuPowerBatchSource = gpuPowerSelectedDevices[0] ?? gpuControlDevices[0] ?? null;
+
+  const gpuClockBatchPool = gpuClockSelectedDevices.length > 0 ? gpuClockSelectedDevices : gpuClockDevices;
+  const gpuClockSmBatchSource = gpuClockBatchPool.find((device) => device.canTuneSM) ?? null;
+  const gpuClockMemBatchSource = gpuClockBatchPool.find((device) => device.canTuneMem) ?? null;
+
+  const cpuCoreAvgCurrent = avgOf(cpuCoreSelectedDevices, (device) => device.scalingCurrentKhz);
+  const cpuCoreAvgRange = avgRangeOf(
+    cpuCoreSelectedDevices,
+    (device) => device.scalingCurrentMin,
+    (device) => device.scalingCurrentMax,
+  );
+  const cpuUncoreAvgCurrent = avgOf(cpuUncoreSelectedDevices, (device) => device.uncoreCurrentKhz);
+  const cpuUncoreAvgRange = avgRangeOf(
+    cpuUncoreSelectedDevices,
+    (device) => device.uncoreCurrentMin,
+    (device) => device.uncoreCurrentMax,
+  );
+  const cpuPackageCapAvgValue = avgOf(cpuPackageCapSelectedDevices, (device) => device.packagePowerCurrentMicroW);
+  const cpuPackageCapAvgMarker = avgOf(cpuPackageCapSelectedDevices, (device) =>
+    device.packagePowerUsageMicroW > 0 ? device.packagePowerUsageMicroW : Number.NaN,
+  );
+  const cpuDramCapAvgValue = avgOf(cpuDramCapSelectedDevices, (device) => device.dramPowerCurrentMicroW);
+  const cpuDramCapAvgMarker = avgOf(cpuDramCapSelectedDevices, (device) =>
+    device.hasDramPowerUsage && device.dramPowerUsageMicroW > 0 ? device.dramPowerUsageMicroW : Number.NaN,
+  );
+  const gpuPowerAvgValue = avgOf(gpuPowerSelectedDevices, (device) => device.powerCurrentCapMilliW);
+  const gpuPowerAvgMarker = avgOf(gpuPowerSelectedDevices, (device) =>
+    device.powerCurrentUsageMilliW > 0 ? device.powerCurrentUsageMilliW : Number.NaN,
+  );
+  const gpuClockSmAvgCurrent = avgOf(
+    gpuClockSelectedDevices.filter((device) => device.canTuneSM),
+    (device) => device.smCurrentClock,
+  );
+  const gpuClockSmAvgRange = avgRangeOf(
+    gpuClockSelectedDevices.filter((device) => device.canTuneSM),
+    (device) => device.smCurrentMin,
+    (device) => device.smCurrentMax,
+  );
+  const gpuClockMemAvgCurrent = avgOf(
+    gpuClockSelectedDevices.filter((device) => device.canTuneMem),
+    (device) => device.memCurrentClock,
+  );
+  const gpuClockMemAvgRange = avgRangeOf(
+    gpuClockSelectedDevices.filter((device) => device.canTuneMem),
+    (device) => device.memCurrentMin,
+    (device) => device.memCurrentMax,
+  );
+
+  const cpuCoreSelectionKey = useMemo(
+    () => selectionSignature(cpuCoreSelection.selectedIds),
+    [cpuCoreSelection.selectedIds],
+  );
+  const cpuUncoreSelectionKey = useMemo(
+    () => selectionSignature(cpuUncoreSelection.selectedIds),
+    [cpuUncoreSelection.selectedIds],
+  );
+  const gpuClockSelectionKey = useMemo(
+    () => selectionSignature(gpuClockSelection.selectedIds),
+    [gpuClockSelection.selectedIds],
+  );
+
+  const [cpuCoreBatchRange, setCpuCoreBatchRange] = useState<[number, number] | null>(null);
+  const [cpuUncoreBatchRange, setCpuUncoreBatchRange] = useState<[number, number] | null>(null);
+  const [gpuClockSmBatchRange, setGpuClockSmBatchRange] = useState<[number, number] | null>(null);
+  const [gpuClockMemBatchRange, setGpuClockMemBatchRange] = useState<[number, number] | null>(null);
+
+  useEffect(() => {
+    setCpuCoreBatchRange(cpuCoreAvgRange);
+  }, [cpuCoreSelectionKey]);
+
+  useEffect(() => {
+    setCpuUncoreBatchRange(cpuUncoreAvgRange);
+  }, [cpuUncoreSelectionKey]);
+
+  useEffect(() => {
+    setGpuClockSmBatchRange(gpuClockSmAvgRange);
+    setGpuClockMemBatchRange(gpuClockMemAvgRange);
+  }, [gpuClockSelectionKey]);
 
   return (
     <div className="grid gap-3 lg:h-full lg:min-h-0 lg:grid-cols-[4fr_3fr_3fr] lg:grid-rows-1 lg:overflow-hidden">
@@ -1295,85 +1911,393 @@ export function PowerModuleView({ nodes, history, sendCommand }: PowerModuleView
         <ControlGroup
           title="CPU Core Range"
         >
-          {cpuControlDevices.length > 0 ? (
-            cpuControlDevices.map((device) => (
-              <CpuCoreRangeControlItem key={`cpu-core-${device.id}`} device={device} sendCommand={sendCommand} />
-            ))
-          ) : (
-            <div className="text-sm text-[var(--telemetry-muted-fg)]">No CPU core range controls available.</div>
+          {(open) => (
+            <>
+              {!open && cpuCoreOptions.length > 0 ? <SelectionChips options={cpuCoreOptions} selection={cpuCoreSelection} /> : null}
+              {open ? (
+                cpuControlDevices.length > 0 ? (
+                  cpuControlDevices.map((device) => {
+                    const option = cpuCoreOptionMap.get(device.id);
+                    if (!option) return null;
+                    return (
+                      <CpuCoreRangeControlItem
+                        key={`cpu-core-${device.id}`}
+                        device={device}
+                        sendCommand={sendCommand}
+                        option={option}
+                        selected={cpuCoreSelection.isSelected(option.id)}
+                        forcedRange={cpuCoreSelection.isSelected(option.id) ? cpuCoreBatchRange : null}
+                        selectionDisabled={cpuCoreSelection.isDisabled(option)}
+                        onToggleSelection={(checked) => cpuCoreSelection.toggle(option, checked)}
+                        showControls={open}
+                      />
+                    );
+                  })
+                ) : (
+                  <div className="text-sm text-[var(--telemetry-muted-fg)]">No CPU core range controls available.</div>
+                )
+              ) : null}
+              {cpuCoreBatchSource ? (
+                <BatchRangeControlSlider
+                  title="Batch CPU Core Range"
+                  min={cpuCoreBatchSource.scalingMinBound}
+                  max={cpuCoreBatchSource.scalingMaxBound}
+                  step={1000}
+                  currentRange={cpuCoreBatchRange ?? cpuCoreAvgRange}
+                  currentValue={cpuCoreAvgCurrent}
+                  resetKey={cpuCoreSelectionKey}
+                  valueFormatter={(value) => formatKHz(value)}
+                  tickFormatter={(value) => formatNumber(value / 1000, 0)}
+                  enabled={cpuCoreSelectedDevices.length > 0}
+                  onRangeChange={(next) => setCpuCoreBatchRange(next)}
+                  onApply={(nextRange) => {
+                    for (const device of cpuCoreSelectedDevices) {
+                      const minKhz = Math.round(clamp(nextRange[0], device.scalingMinBound, device.scalingMaxBound));
+                      const maxKhz = Math.round(clamp(nextRange[1], device.scalingMinBound, device.scalingMaxBound));
+                      dispatchControlCommand(sendCommand, device.nodeId, "cpu_scaling_range", {
+                        packageId: device.packageId,
+                        minKhz: Math.min(minKhz, maxKhz),
+                        maxKhz: Math.max(minKhz, maxKhz),
+                      });
+                    }
+                  }}
+                />
+              ) : null}
+            </>
           )}
         </ControlGroup>
 
         <ControlGroup
           title="CPU Uncore Range"
         >
-          {cpuUncoreDevices.length > 0 ? (
-            cpuUncoreDevices.map((device) => (
-              <CpuUncoreRangeControlItem key={`cpu-uncore-${device.id}`} device={device} sendCommand={sendCommand} />
-            ))
-          ) : (
-            <div className="text-sm text-[var(--telemetry-muted-fg)]">No CPU uncore controls available.</div>
+          {(open) => (
+            <>
+              {!open && cpuUncoreOptions.length > 0 ? (
+                <SelectionChips options={cpuUncoreOptions} selection={cpuUncoreSelection} />
+              ) : null}
+              {open ? (
+                cpuUncoreDevices.length > 0 ? (
+                  cpuUncoreDevices.map((device) => {
+                    const option = cpuUncoreOptionMap.get(device.id);
+                    if (!option) return null;
+                    return (
+                      <CpuUncoreRangeControlItem
+                        key={`cpu-uncore-${device.id}`}
+                        device={device}
+                        sendCommand={sendCommand}
+                        option={option}
+                        selected={cpuUncoreSelection.isSelected(option.id)}
+                        forcedRange={cpuUncoreSelection.isSelected(option.id) ? cpuUncoreBatchRange : null}
+                        selectionDisabled={cpuUncoreSelection.isDisabled(option)}
+                        onToggleSelection={(checked) => cpuUncoreSelection.toggle(option, checked)}
+                        showControls={open}
+                      />
+                    );
+                  })
+                ) : (
+                  <div className="text-sm text-[var(--telemetry-muted-fg)]">No CPU uncore controls available.</div>
+                )
+              ) : null}
+              {cpuUncoreBatchSource ? (
+                <BatchRangeControlSlider
+                  title="Batch CPU Uncore Range"
+                  min={cpuUncoreBatchSource.uncoreMinBound}
+                  max={cpuUncoreBatchSource.uncoreMaxBound}
+                  step={1000}
+                  currentRange={cpuUncoreBatchRange ?? cpuUncoreAvgRange}
+                  currentValue={cpuUncoreAvgCurrent}
+                  resetKey={cpuUncoreSelectionKey}
+                  valueFormatter={(value) => formatKHz(value)}
+                  tickFormatter={(value) => formatNumber(value / 1000, 0)}
+                  enabled={cpuUncoreSelectedDevices.length > 0}
+                  onRangeChange={(next) => setCpuUncoreBatchRange(next)}
+                  onApply={(nextRange) => {
+                    for (const device of cpuUncoreSelectedDevices) {
+                      const minKhz = Math.round(clamp(nextRange[0], device.uncoreMinBound, device.uncoreMaxBound));
+                      const maxKhz = Math.round(clamp(nextRange[1], device.uncoreMinBound, device.uncoreMaxBound));
+                      dispatchControlCommand(sendCommand, device.nodeId, "cpu_uncore_range", {
+                        packageId: device.packageId,
+                        minKhz: Math.min(minKhz, maxKhz),
+                        maxKhz: Math.max(minKhz, maxKhz),
+                      });
+                    }
+                  }}
+                />
+              ) : null}
+            </>
           )}
         </ControlGroup>
 
         <ControlGroup
           title="CPU Package Power Cap"
         >
-          {cpuControlDevices.length > 0 ? (
-            cpuControlDevices.map((device) => (
-              <CpuPowerCapControlItem
-                key={`cpu-package-cap-${device.id}`}
-                device={device}
-                domain="package"
-                sendCommand={sendCommand}
-              />
-            ))
-          ) : (
-            <div className="text-sm text-[var(--telemetry-muted-fg)]">No CPU package power cap controls available.</div>
+          {(open) => (
+            <>
+              {!open && cpuPackageCapOptions.length > 0 ? (
+                <SelectionChips options={cpuPackageCapOptions} selection={cpuPackageCapSelection} />
+              ) : null}
+              {open ? (
+                cpuControlDevices.length > 0 ? (
+                  cpuControlDevices.map((device) => {
+                    const option = cpuPackageCapOptionMap.get(device.id);
+                    if (!option) return null;
+                    return (
+                      <CpuPowerCapControlItem
+                        key={`cpu-package-cap-${device.id}`}
+                        device={device}
+                        domain="package"
+                        sendCommand={sendCommand}
+                        option={option}
+                        selected={cpuPackageCapSelection.isSelected(option.id)}
+                        selectionDisabled={cpuPackageCapSelection.isDisabled(option)}
+                        onToggleSelection={(checked) => cpuPackageCapSelection.toggle(option, checked)}
+                        showControls={open}
+                      />
+                    );
+                  })
+                ) : (
+                  <div className="text-sm text-[var(--telemetry-muted-fg)]">No CPU package power cap controls available.</div>
+                )
+              ) : null}
+              {cpuPackageCapBatchSource ? (
+                <BatchControlSlider
+                  title="Batch CPU Package Power Cap"
+                  min={cpuPackageCapBatchSource.packagePowerMinMicroW}
+                  max={cpuPackageCapBatchSource.packagePowerMaxMicroW}
+                  step={1000}
+                  initialValue={cpuPackageCapAvgValue}
+                  currentValue={cpuPackageCapAvgMarker}
+                  valueFormatter={(value) => formatPowerMicroW(value)}
+                  tickFormatter={(value) => formatNumber(value / 1_000_000, 0)}
+                  enabled={cpuPackageCapSelectedDevices.length > 0}
+                  onApply={(value) => {
+                    for (const device of cpuPackageCapSelectedDevices) {
+                      dispatchControlCommand(sendCommand, device.nodeId, "cpu_power_cap", {
+                        packageId: device.packageId,
+                        microwatt: Math.round(clamp(value, device.packagePowerMinMicroW, device.packagePowerMaxMicroW)),
+                        domain: "package",
+                      });
+                    }
+                  }}
+                />
+              ) : null}
+            </>
           )}
         </ControlGroup>
 
         <ControlGroup
           title="CPU DRAM Power Cap"
         >
-          {cpuDramCapDevices.length > 0 ? (
-            cpuDramCapDevices.map((device) => (
-              <CpuPowerCapControlItem
-                key={`cpu-dram-cap-${device.id}`}
-                device={device}
-                domain="dram"
-                sendCommand={sendCommand}
-              />
-            ))
-          ) : (
-            <div className="text-sm text-[var(--telemetry-muted-fg)]">No CPU DRAM power cap controls available.</div>
+          {(open) => (
+            <>
+              {!open && cpuDramCapOptions.length > 0 ? (
+                <SelectionChips options={cpuDramCapOptions} selection={cpuDramCapSelection} />
+              ) : null}
+              {open ? (
+                cpuDramCapDevices.length > 0 ? (
+                  cpuDramCapDevices.map((device) => {
+                    const option = cpuDramCapOptionMap.get(device.id);
+                    if (!option) return null;
+                    return (
+                      <CpuPowerCapControlItem
+                        key={`cpu-dram-cap-${device.id}`}
+                        device={device}
+                        domain="dram"
+                        sendCommand={sendCommand}
+                        option={option}
+                        selected={cpuDramCapSelection.isSelected(option.id)}
+                        selectionDisabled={cpuDramCapSelection.isDisabled(option)}
+                        onToggleSelection={(checked) => cpuDramCapSelection.toggle(option, checked)}
+                        showControls={open}
+                      />
+                    );
+                  })
+                ) : (
+                  <div className="text-sm text-[var(--telemetry-muted-fg)]">No CPU DRAM power cap controls available.</div>
+                )
+              ) : null}
+              {cpuDramCapBatchSource ? (
+                <BatchControlSlider
+                  title="Batch CPU DRAM Power Cap"
+                  min={cpuDramCapBatchSource.dramPowerMinMicroW}
+                  max={cpuDramCapBatchSource.dramPowerMaxMicroW}
+                  step={1000}
+                  initialValue={cpuDramCapAvgValue}
+                  currentValue={cpuDramCapAvgMarker}
+                  valueFormatter={(value) => formatPowerMicroW(value)}
+                  tickFormatter={(value) => formatNumber(value / 1_000_000, 0)}
+                  enabled={cpuDramCapSelectedDevices.length > 0}
+                  onApply={(value) => {
+                    for (const device of cpuDramCapSelectedDevices) {
+                      dispatchControlCommand(sendCommand, device.nodeId, "cpu_power_cap", {
+                        packageId: device.packageId,
+                        microwatt: Math.round(clamp(value, device.dramPowerMinMicroW, device.dramPowerMaxMicroW)),
+                        domain: "dram",
+                      });
+                    }
+                  }}
+                />
+              ) : null}
+            </>
           )}
         </ControlGroup>
-
       </div>
 
       <div className="space-y-3 lg:h-full lg:min-h-0 lg:overflow-y-auto lg:pl-1">
         <ControlGroup
           title="GPU Clock Range"
         >
-          {gpuClockDevices.length > 0 ? (
-            gpuClockDevices.map((device) => (
-              <GpuClockRangeControlItem key={`gpu-clock-${device.id}`} device={device} sendCommand={sendCommand} />
-            ))
-          ) : (
-            <div className="text-sm text-[var(--telemetry-muted-fg)]">No GPU clock range controls available.</div>
+          {(open) => (
+            <>
+              {!open && gpuClockOptions.length > 0 ? <SelectionChips options={gpuClockOptions} selection={gpuClockSelection} /> : null}
+              {open ? (
+                gpuClockDevices.length > 0 ? (
+                  gpuClockDevices.map((device) => {
+                    const option = gpuClockOptionMap.get(device.id);
+                    if (!option) return null;
+                    return (
+                      <GpuClockRangeControlItem
+                        key={`gpu-clock-${device.id}`}
+                        device={device}
+                        sendCommand={sendCommand}
+                        option={option}
+                        selected={gpuClockSelection.isSelected(option.id)}
+                        forcedSmRange={gpuClockSelection.isSelected(option.id) ? gpuClockSmBatchRange : null}
+                        forcedMemRange={gpuClockSelection.isSelected(option.id) ? gpuClockMemBatchRange : null}
+                        selectionDisabled={gpuClockSelection.isDisabled(option)}
+                        onToggleSelection={(checked) => gpuClockSelection.toggle(option, checked)}
+                        showControls={open}
+                      />
+                    );
+                  })
+                ) : (
+                  <div className="text-sm text-[var(--telemetry-muted-fg)]">No GPU clock range controls available.</div>
+                )
+              ) : null}
+              {gpuClockSmBatchSource ? (
+                <BatchRangeControlSlider
+                  title="Batch GPU SM Clock"
+                  min={gpuClockSmBatchSource.smMinBound}
+                  max={gpuClockSmBatchSource.smMaxBound}
+                  step={1}
+                  currentRange={gpuClockSmBatchRange ?? gpuClockSmAvgRange}
+                  currentValue={gpuClockSmAvgCurrent}
+                  resetKey={gpuClockSelectionKey}
+                  valueFormatter={(value) => `${formatNumber(value)} MHz`}
+                  tickFormatter={(value) => formatNumber(value, 0)}
+                  enabled={gpuClockSelectedDevices.some((device) => device.canTuneSM)}
+                  onRangeChange={(next) => setGpuClockSmBatchRange(next)}
+                  onApply={(nextRange) => {
+                    for (const device of gpuClockSelectedDevices) {
+                      if (!device.canTuneSM) continue;
+                      const smMinMhz = Math.round(clamp(nextRange[0], device.smMinBound, device.smMaxBound));
+                      const smMaxMhz = Math.round(clamp(nextRange[1], device.smMinBound, device.smMaxBound));
+                      const memMin = device.canTuneMem
+                        ? clamp(Math.min(device.memCurrentMin, device.memCurrentMax), device.memMinBound, device.memMaxBound)
+                        : 0;
+                      const memMax = device.canTuneMem
+                        ? clamp(Math.max(device.memCurrentMin, device.memCurrentMax), device.memMinBound, device.memMaxBound)
+                        : 0;
+                      dispatchControlCommand(sendCommand, device.nodeId, "gpu_clock_range", {
+                        gpuIndex: device.gpuIndex,
+                        smMinMhz: Math.min(smMinMhz, smMaxMhz),
+                        smMaxMhz: Math.max(smMinMhz, smMaxMhz),
+                        memMinMhz: device.canTuneMem ? Math.round(memMin) : 0,
+                        memMaxMhz: device.canTuneMem ? Math.round(memMax) : 0,
+                      });
+                    }
+                  }}
+                />
+              ) : null}
+              {gpuClockMemBatchSource ? (
+                <BatchRangeControlSlider
+                  title="Batch GPU Memory Clock"
+                  min={gpuClockMemBatchSource.memMinBound}
+                  max={gpuClockMemBatchSource.memMaxBound}
+                  step={1}
+                  currentRange={gpuClockMemBatchRange ?? gpuClockMemAvgRange}
+                  currentValue={gpuClockMemAvgCurrent}
+                  resetKey={gpuClockSelectionKey}
+                  valueFormatter={(value) => `${formatNumber(value)} MHz`}
+                  tickFormatter={(value) => formatNumber(value, 0)}
+                  enabled={gpuClockSelectedDevices.some((device) => device.canTuneMem)}
+                  onRangeChange={(next) => setGpuClockMemBatchRange(next)}
+                  onApply={(nextRange) => {
+                    for (const device of gpuClockSelectedDevices) {
+                      if (!device.canTuneMem) continue;
+                      const memMinMhz = Math.round(clamp(nextRange[0], device.memMinBound, device.memMaxBound));
+                      const memMaxMhz = Math.round(clamp(nextRange[1], device.memMinBound, device.memMaxBound));
+                      const smMin = device.canTuneSM
+                        ? clamp(Math.min(device.smCurrentMin, device.smCurrentMax), device.smMinBound, device.smMaxBound)
+                        : 0;
+                      const smMax = device.canTuneSM
+                        ? clamp(Math.max(device.smCurrentMin, device.smCurrentMax), device.smMinBound, device.smMaxBound)
+                        : 0;
+                      dispatchControlCommand(sendCommand, device.nodeId, "gpu_clock_range", {
+                        gpuIndex: device.gpuIndex,
+                        smMinMhz: device.canTuneSM ? Math.round(smMin) : 0,
+                        smMaxMhz: device.canTuneSM ? Math.round(smMax) : 0,
+                        memMinMhz: Math.min(memMinMhz, memMaxMhz),
+                        memMaxMhz: Math.max(memMinMhz, memMaxMhz),
+                      });
+                    }
+                  }}
+                />
+              ) : null}
+            </>
           )}
         </ControlGroup>
 
         <ControlGroup
           title="GPU Power Cap"
         >
-          {gpuControlDevices.length > 0 ? (
-            gpuControlDevices.map((device) => (
-              <GpuPowerCapControlItem key={`gpu-power-cap-${device.id}`} device={device} sendCommand={sendCommand} />
-            ))
-          ) : (
-            <div className="text-sm text-[var(--telemetry-muted-fg)]">No GPU power cap controls available.</div>
+          {(open) => (
+            <>
+              {!open && gpuPowerOptions.length > 0 ? <SelectionChips options={gpuPowerOptions} selection={gpuPowerSelection} /> : null}
+              {open ? (
+                gpuControlDevices.length > 0 ? (
+                  gpuControlDevices.map((device) => {
+                    const option = gpuPowerOptionMap.get(device.id);
+                    if (!option) return null;
+                    return (
+                      <GpuPowerCapControlItem
+                        key={`gpu-power-cap-${device.id}`}
+                        device={device}
+                        sendCommand={sendCommand}
+                        option={option}
+                        selected={gpuPowerSelection.isSelected(option.id)}
+                        selectionDisabled={gpuPowerSelection.isDisabled(option)}
+                        onToggleSelection={(checked) => gpuPowerSelection.toggle(option, checked)}
+                        showControls={open}
+                      />
+                    );
+                  })
+                ) : (
+                  <div className="text-sm text-[var(--telemetry-muted-fg)]">No GPU power cap controls available.</div>
+                )
+              ) : null}
+              {gpuPowerBatchSource ? (
+                <BatchControlSlider
+                  title="Batch GPU Power Cap"
+                  min={gpuPowerBatchSource.powerMinMilliW}
+                  max={gpuPowerBatchSource.powerMaxMilliW}
+                  step={1}
+                  initialValue={gpuPowerAvgValue}
+                  currentValue={gpuPowerAvgMarker}
+                  valueFormatter={(value) => formatPowerMilliW(value)}
+                  tickFormatter={(value) => formatNumber(value / 1000, 0)}
+                  enabled={gpuPowerSelectedDevices.length > 0}
+                  onApply={(value) => {
+                    for (const device of gpuPowerSelectedDevices) {
+                      dispatchControlCommand(sendCommand, device.nodeId, "gpu_power_cap", {
+                        gpuIndex: device.gpuIndex,
+                        milliwatt: Math.round(clamp(value, device.powerMinMilliW, device.powerMaxMilliW)),
+                      });
+                    }
+                  }}
+                />
+              ) : null}
+            </>
           )}
         </ControlGroup>
       </div>
