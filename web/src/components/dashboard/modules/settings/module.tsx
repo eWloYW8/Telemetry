@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Settings2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -13,8 +13,16 @@ import {
   type HistoryLimitSettings,
 } from "../../state/metric-history";
 import {
+  defaultChartRenderMaxPoints,
+  defaultDashboardUpdateIntervalMs,
   defaultRichControlSliderGradientEnabled,
+  loadChartRenderMaxPoints,
+  loadDashboardUpdateIntervalMs,
   loadRichControlSliderGradientEnabled,
+  normalizeChartRenderMaxPoints,
+  normalizeDashboardUpdateIntervalMs,
+  saveChartRenderMaxPoints,
+  saveDashboardUpdateIntervalMs,
   saveRichControlSliderGradientEnabled,
 } from "../../state/ui-settings";
 
@@ -50,6 +58,10 @@ export function SettingsModuleView({
     String(processMinSampleIntervalMs),
   );
   const [richSliderGradientEnabled, setRichSliderGradientEnabled] = useState(defaultRichControlSliderGradientEnabled);
+  const [chartRenderMaxPointsValue, setChartRenderMaxPointsValue] = useState(String(defaultChartRenderMaxPoints));
+  const [dashboardUpdateIntervalMsValue, setDashboardUpdateIntervalMsValue] = useState(
+    String(defaultDashboardUpdateIntervalMs),
+  );
 
   useEffect(() => {
     setPerSeriesValue(String(historyLimits.perSeriesMaxPoints));
@@ -66,16 +78,9 @@ export function SettingsModuleView({
 
   useEffect(() => {
     setRichSliderGradientEnabled(loadRichControlSliderGradientEnabled());
+    setChartRenderMaxPointsValue(String(loadChartRenderMaxPoints()));
+    setDashboardUpdateIntervalMsValue(String(loadDashboardUpdateIntervalMs()));
   }, []);
-
-  const normalizedPreview = useMemo(
-    () =>
-      normalizeHistoryLimitSettings({
-        perSeriesMaxPoints: Number(perSeriesValue),
-        totalMaxPoints: Number(totalValue),
-      }),
-    [perSeriesValue, totalValue],
-  );
 
   return (
     <Section
@@ -136,6 +141,28 @@ export function SettingsModuleView({
               <span className="ml-2 text-sm text-[var(--telemetry-text)]">Enable Gradient</span>
             </div>
           </label>
+          <label className="space-y-1">
+            <div className="text-sm font-medium text-[var(--telemetry-text)]">Chart Max Render Points</div>
+            <Input
+              type="number"
+              min={100}
+              max={10000}
+              step={50}
+              value={chartRenderMaxPointsValue}
+              onChange={(e) => setChartRenderMaxPointsValue(e.target.value)}
+            />
+          </label>
+          <label className="space-y-1">
+            <div className="text-sm font-medium text-[var(--telemetry-text)]">Dashboard Update Interval (ms)</div>
+            <Input
+              type="number"
+              min={16}
+              max={1000}
+              step={10}
+              value={dashboardUpdateIntervalMsValue}
+              onChange={(e) => setDashboardUpdateIntervalMsValue(e.target.value)}
+            />
+          </label>
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -149,6 +176,8 @@ export function SettingsModuleView({
               onSaveMinSampleIntervalMs(Number(minSampleIntervalValue));
               onSaveProcessMinSampleIntervalMs(Number(processMinSampleIntervalValue));
               saveRichControlSliderGradientEnabled(richSliderGradientEnabled);
+              saveChartRenderMaxPoints(normalizeChartRenderMaxPoints(chartRenderMaxPointsValue));
+              saveDashboardUpdateIntervalMs(normalizeDashboardUpdateIntervalMs(dashboardUpdateIntervalMsValue));
             }}
           >
             Save
@@ -163,10 +192,14 @@ export function SettingsModuleView({
               setMinSampleIntervalValue("0");
               setProcessMinSampleIntervalValue("0");
               setRichSliderGradientEnabled(defaultRichControlSliderGradientEnabled);
+              setChartRenderMaxPointsValue(String(defaultChartRenderMaxPoints));
+              setDashboardUpdateIntervalMsValue(String(defaultDashboardUpdateIntervalMs));
               onSaveHistoryLimits(defaults);
               onSaveMinSampleIntervalMs(0);
               onSaveProcessMinSampleIntervalMs(0);
               saveRichControlSliderGradientEnabled(defaultRichControlSliderGradientEnabled);
+              saveChartRenderMaxPoints(defaultChartRenderMaxPoints);
+              saveDashboardUpdateIntervalMs(defaultDashboardUpdateIntervalMs);
             }}
           >
             Reset Defaults

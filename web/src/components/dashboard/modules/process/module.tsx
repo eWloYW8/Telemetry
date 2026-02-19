@@ -4,19 +4,18 @@ import { useMemo, useState } from "react";
 import { Activity } from "lucide-react";
 
 import { ProcessTable } from "../../components/process/process-table";
-import type { ProcessRow, ProcessSortKey, RawHistorySample, SortDir } from "../../types";
+import type { ProcessRow, ProcessSortKey, SortDir } from "../../types";
 import { numField, strField } from "../shared/data";
 import { Section } from "../shared/section";
 
 type ProcessModuleViewProps = {
   latestRaw: Record<string, Record<string, any>>;
-  historyByCategory: Record<string, RawHistorySample[]>;
   cmdPending: boolean;
   cmdMsg: string;
   sendCommand: (commandType: string, payload: Record<string, unknown>) => void;
 };
 
-export function ProcessModuleView({ latestRaw, historyByCategory, cmdPending, cmdMsg, sendCommand }: ProcessModuleViewProps) {
+export function ProcessModuleView({ latestRaw, cmdPending, cmdMsg, sendCommand }: ProcessModuleViewProps) {
   const [procSortKey, setProcSortKey] = useState<ProcessSortKey>("pid");
   const [procSortDir, setProcSortDir] = useState<SortDir>("asc");
   const [pinnedPids, setPinnedPids] = useState<Set<number>>(new Set());
@@ -60,7 +59,7 @@ export function ProcessModuleView({ latestRaw, historyByCategory, cmdPending, cm
           return 0;
       }
     });
-  }, [processRowsRaw, procSortDir, procSortKey, pinnedPids, historyByCategory.process]);
+  }, [processRowsRaw, procSortDir, procSortKey, pinnedPids]);
 
   const onSortProcess = (key: ProcessSortKey) => {
     if (procSortKey === key) {

@@ -4,18 +4,29 @@ import { useEffect, useRef, useState } from "react";
 
 import { telemetry as telemetryProto } from "@/lib/proto/telemetry";
 
-import type { NodeRuntime, RawHistorySample } from "../types";
-import { toBigIntNs } from "../utils/time";
-import { markStaleNodes, upsertNode } from "./node-store";
+import type { NodeRuntime } from "../types";
+import { buildProtoCommand, nextCommandID } from "./commands";
 import {
   applyHistoryLimits,
+  countHistoryPoints,
   defaultHistoryLimits,
   normalizeHistoryLimitSettings,
-  pushHistory,
+  pushHistoryBatchWithTotal,
   type HistoryLimitSettings,
   type HistoryMap,
 } from "./metric-history";
-import { buildProtoCommand, nextCommandID } from "./commands";
+import { markStaleNodes } from "./node-store";
+import {
+  loadDashboardUpdateIntervalMs,
+  uiSettingsChangedEventName,
+} from "./ui-settings";
+import { decodeWSEventFromBytes } from "./ws-message-decode";
+import {
+  defaultMinSampleIntervalMs,
+  defaultProcessMinSampleIntervalMs,
+  normalizeMinSampleIntervalMs,
+} from "./ws-sample-filter";
+import type { WorkerDecodedEvent, WorkerInboundMessage, WorkerMetricEvent, WorkerNodeEvent } from "./ws-worker-protocol";
 
 export const wsCategories = [
   "cpu_ultra_fast",
@@ -33,153 +44,6 @@ const commandTimeoutMs = 15_000;
 const historyLimitsStorageKey = "telemetry.history.limits.v1";
 const minSampleIntervalStorageKey = "telemetry.min-sample-interval-ms.v1";
 const processMinSampleIntervalStorageKey = "telemetry.process-min-sample-interval-ms.v1";
-const defaultMinSampleIntervalMs = 0;
-const defaultProcessMinSampleIntervalMs = 0;
-const minSampleIntervalMsMin = 0;
-const minSampleIntervalMsMax = 60_000;
-const sampleMetaKeys = new Set(["category", "atUnixNano", "at_unix_nano"]);
-const identityHintKeys = [
-  "coreId",
-  "core_id",
-  "packageId",
-  "package_id",
-  "gpuIndex",
-  "gpu_index",
-  "pid",
-  "ppid",
-  "uid",
-  "gid",
-  "name",
-  "device",
-  "disk",
-  "iface",
-  "interface",
-  "mountpoint",
-  "mountPoint",
-  "filesystem",
-  "fs",
-] as const;
-
-function normalizeMinSampleIntervalMs(value: unknown): number {
-  const num = Number(value);
-  if (!Number.isFinite(num)) return defaultMinSampleIntervalMs;
-  return Math.min(minSampleIntervalMsMax, Math.max(minSampleIntervalMsMin, Math.floor(num)));
-}
-
-function isPlainObject(value: unknown): value is Record<string, any> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function itemIdentity(item: unknown, index: number): string {
-  if (!isPlainObject(item)) return `idx:${index}`;
-
-  const parts: string[] = [];
-  for (const key of identityHintKeys) {
-    const value = item[key];
-    if (value === null || value === undefined) continue;
-    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-      parts.push(`${key}=${String(value)}`);
-    }
-  }
-  if (parts.length > 0) return parts.join("|");
-
-  for (const [key, value] of Object.entries(item)) {
-    if (!/(^id$|_id$|Id$|ID$)/.test(key)) continue;
-    if (value === null || value === undefined) continue;
-    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-      return `${key}=${String(value)}`;
-    }
-  }
-
-  return `idx:${index}`;
-}
-
-function shouldAcceptPoint(
-  lastAcceptedByPoint: Map<string, bigint>,
-  pointKey: string,
-  atNs: bigint,
-  minIntervalNs: bigint,
-): boolean {
-  const lastAccepted = lastAcceptedByPoint.get(pointKey);
-  if (lastAccepted !== undefined && atNs - lastAccepted < minIntervalNs) {
-    return false;
-  }
-  lastAcceptedByPoint.set(pointKey, atNs);
-  return true;
-}
-
-function filterSampleByMinInterval(
-  nodeId: string,
-  category: string,
-  sample: Record<string, any>,
-  atNs: bigint,
-  minIntervalMs: number,
-  lastAcceptedByPoint: Map<string, bigint>,
-): Record<string, any> | null {
-  if (minIntervalMs <= 0) return sample;
-
-  const minIntervalNs = BigInt(minIntervalMs) * 1_000_000n;
-  // Process payload is a snapshot table. Filtering individual rows causes partial views.
-  // Keep snapshot atomic: either accept whole sample or drop whole sample by interval.
-  if (category === "process") {
-    const snapshotKey = `${nodeId}\u0000${category}\u0000snapshot`;
-    if (!shouldAcceptPoint(lastAcceptedByPoint, snapshotKey, atNs, minIntervalNs)) {
-      return null;
-    }
-    return sample;
-  }
-
-  let acceptedPoints = 0;
-  const nextSample: Record<string, any> = {};
-
-  for (const [key, value] of Object.entries(sample)) {
-    if (sampleMetaKeys.has(key)) {
-      nextSample[key] = value;
-    }
-  }
-
-  for (const [payloadKey, payloadValue] of Object.entries(sample)) {
-    if (sampleMetaKeys.has(payloadKey)) continue;
-    if (!isPlainObject(payloadValue)) continue;
-
-    const nextPayload: Record<string, any> = { ...payloadValue };
-    const arrayEntries = Object.entries(payloadValue).filter(([, value]) => Array.isArray(value));
-
-    if (arrayEntries.length === 0) {
-      const pointKey = `${nodeId}\u0000${category}\u0000${payloadKey}\u0000obj`;
-      if (!shouldAcceptPoint(lastAcceptedByPoint, pointKey, atNs, minIntervalNs)) {
-        continue;
-      }
-      acceptedPoints += 1;
-      nextSample[payloadKey] = nextPayload;
-      continue;
-    }
-
-    let payloadAccepted = 0;
-    for (const [fieldKey, fieldValue] of arrayEntries) {
-      const list = fieldValue as any[];
-      const filtered: any[] = [];
-      for (let i = 0; i < list.length; i += 1) {
-        const id = itemIdentity(list[i], i);
-        const pointKey = `${nodeId}\u0000${category}\u0000${payloadKey}.${fieldKey}\u0000${id}`;
-        if (!shouldAcceptPoint(lastAcceptedByPoint, pointKey, atNs, minIntervalNs)) {
-          continue;
-        }
-        filtered.push(list[i]);
-      }
-      nextPayload[fieldKey] = filtered;
-      payloadAccepted += filtered.length;
-    }
-
-    if (payloadAccepted > 0) {
-      acceptedPoints += payloadAccepted;
-      nextSample[payloadKey] = nextPayload;
-    }
-  }
-
-  if (acceptedPoints === 0) return null;
-  return nextSample;
-}
 
 type CommandDispatchResult = {
   ok: boolean;
@@ -191,6 +55,53 @@ type PendingCommand = {
   resolve: (result: CommandDispatchResult) => void;
   timeoutID: number;
 };
+
+function mergeNodeState(
+  prev: NodeRuntime[],
+  nodeEvents: WorkerNodeEvent[],
+  metricEvents: WorkerMetricEvent[],
+): NodeRuntime[] {
+  if (nodeEvents.length === 0 && metricEvents.length === 0) {
+    return prev;
+  }
+
+  const byNodeId = new Map<string, NodeRuntime>();
+  for (const node of prev) {
+    byNodeId.set(node.nodeId, node);
+  }
+
+  for (const event of nodeEvents) {
+    const current = byNodeId.get(event.nodeId);
+    byNodeId.set(event.nodeId, {
+      nodeId: event.nodeId,
+      connected: event.connected,
+      lastSeenUnixNano: event.lastSeenUnixNano,
+      sourceIP: event.sourceIP || current?.sourceIP || "",
+      registration: (event.registration ?? current?.registration ?? null) as Record<string, any> | null,
+      latestRaw: {
+        ...(current?.latestRaw ?? {}),
+        ...event.latestRaw,
+      },
+    });
+  }
+
+  for (const event of metricEvents) {
+    const current = byNodeId.get(event.nodeId);
+    byNodeId.set(event.nodeId, {
+      nodeId: event.nodeId,
+      connected: true,
+      lastSeenUnixNano: event.atNs,
+      sourceIP: current?.sourceIP ?? "",
+      registration: current?.registration ?? null,
+      latestRaw: {
+        ...(current?.latestRaw ?? {}),
+        [event.category]: event.sample,
+      },
+    });
+  }
+
+  return Array.from(byNodeId.values()).sort((a, b) => a.nodeId.localeCompare(b.nodeId));
+}
 
 export function useTelemetryWS() {
   const [wsConnected, setWsConnected] = useState(false);
@@ -206,11 +117,17 @@ export function useTelemetryWS() {
 
   const selectedNodeRef = useRef("");
   const socketRef = useRef<WebSocket | null>(null);
+  const workerRef = useRef<Worker | null>(null);
+  const handleDecodedEventRef = useRef<(event: WorkerDecodedEvent) => void>(() => {});
   const pendingCommandsRef = useRef<Map<string, PendingCommand>>(new Map());
   const historyLimitsRef = useRef(historyLimits);
+  const totalHistoryPointsRef = useRef(0);
   const minSampleIntervalMsRef = useRef(minSampleIntervalMs);
   const processMinSampleIntervalMsRef = useRef(processMinSampleIntervalMs);
-  const lastAcceptedPointByStreamRef = useRef<Map<string, bigint>>(new Map());
+  const fallbackLastAcceptedPointByStreamRef = useRef<Map<string, bigint>>(new Map());
+  const decodeQueueRef = useRef<Array<WorkerNodeEvent | WorkerMetricEvent>>([]);
+  const decodeFlushTimerRef = useRef<number | null>(null);
+  const decodeBatchDelayMsRef = useRef<number>(20);
 
   useEffect(() => {
     historyLimitsRef.current = historyLimits;
@@ -223,6 +140,15 @@ export function useTelemetryWS() {
   useEffect(() => {
     processMinSampleIntervalMsRef.current = processMinSampleIntervalMs;
   }, [processMinSampleIntervalMs]);
+
+  useEffect(() => {
+    const sync = () => {
+      decodeBatchDelayMsRef.current = loadDashboardUpdateIntervalMs();
+    };
+    sync();
+    window.addEventListener(uiSettingsChangedEventName, sync);
+    return () => window.removeEventListener(uiSettingsChangedEventName, sync);
+  }, []);
 
   useEffect(() => {
     try {
@@ -299,6 +225,110 @@ export function useTelemetryWS() {
     }
   };
 
+  const flushDecodedQueue = () => {
+    decodeFlushTimerRef.current = null;
+    const queued = decodeQueueRef.current;
+    if (queued.length === 0) return;
+
+    decodeQueueRef.current = [];
+
+    const nodeEvents: WorkerNodeEvent[] = [];
+    const metricEvents: WorkerMetricEvent[] = [];
+
+    for (const event of queued) {
+      if (event.kind === "node") {
+        nodeEvents.push(event);
+      } else {
+        metricEvents.push(event);
+      }
+    }
+
+    if (metricEvents.length > 0) {
+      setHistory((prev) => {
+        const result = pushHistoryBatchWithTotal(
+          prev,
+          metricEvents.map((event) => ({
+            nodeId: event.nodeId,
+            category: event.category,
+            sample: {
+              atNs: event.atNs,
+              sample: event.sample,
+            },
+          })),
+          undefined,
+          historyLimitsRef.current,
+          totalHistoryPointsRef.current,
+        );
+        totalHistoryPointsRef.current = result.totalPoints;
+        return result.history;
+      });
+    }
+
+    if (nodeEvents.length > 0 || metricEvents.length > 0) {
+      setNodes((prev) => mergeNodeState(prev, nodeEvents, metricEvents));
+    }
+  };
+
+  const enqueueDecodeEvent = (event: WorkerNodeEvent | WorkerMetricEvent) => {
+    decodeQueueRef.current.push(event);
+    if (decodeFlushTimerRef.current !== null) return;
+    decodeFlushTimerRef.current = window.setTimeout(flushDecodedQueue, decodeBatchDelayMsRef.current);
+  };
+
+  const handleDecodedEvent = (event: WorkerDecodedEvent) => {
+    if (event.kind === "command_result") {
+      resolvePendingCommand(event.commandID, {
+        ok: event.success,
+        message: event.success
+          ? `${pendingCommandsRef.current.get(event.commandID)?.commandType ?? "command"}: success`
+          : `${pendingCommandsRef.current.get(event.commandID)?.commandType ?? "command"}: ${event.error || "failed"}`,
+      });
+      return;
+    }
+    enqueueDecodeEvent(event);
+  };
+  handleDecodedEventRef.current = handleDecodedEvent;
+
+  useEffect(() => {
+    if (typeof Worker === "undefined") {
+      return;
+    }
+
+    const worker = new Worker(new URL("./ws-message.worker.ts", import.meta.url), { type: "module" });
+    workerRef.current = worker;
+
+    worker.onmessage = (event: MessageEvent<WorkerDecodedEvent>) => {
+      try {
+        handleDecodedEventRef.current(event.data);
+      } catch {
+        // ignore worker message errors
+      }
+    };
+
+    const initMsg: WorkerInboundMessage = {
+      type: "set-min-sample-interval",
+      minSampleIntervalMs: minSampleIntervalMsRef.current,
+      processMinSampleIntervalMs: processMinSampleIntervalMsRef.current,
+    };
+    worker.postMessage(initMsg);
+
+    return () => {
+      workerRef.current = null;
+      worker.terminate();
+    };
+  }, []);
+
+  useEffect(() => {
+    const worker = workerRef.current;
+    if (!worker) return;
+    const msg: WorkerInboundMessage = {
+      type: "set-min-sample-interval",
+      minSampleIntervalMs,
+      processMinSampleIntervalMs,
+    };
+    worker.postMessage(msg);
+  }, [minSampleIntervalMs, processMinSampleIntervalMs]);
+
   useEffect(() => {
     const timer = window.setInterval(() => {
       const nowNs = BigInt(Date.now()) * 1_000_000n;
@@ -331,110 +361,30 @@ export function useTelemetryWS() {
 
       socket.onmessage = async (event: MessageEvent) => {
         try {
-          let bytes: Uint8Array;
+          let bytesBuffer: ArrayBuffer;
           if (event.data instanceof ArrayBuffer) {
-            bytes = new Uint8Array(event.data);
+            bytesBuffer = event.data;
           } else if (event.data instanceof Blob) {
-            bytes = new Uint8Array(await event.data.arrayBuffer());
+            bytesBuffer = await event.data.arrayBuffer();
           } else {
             return;
           }
 
-          const msg = telemetryProto.v1.WSOutgoingMessage.decode(bytes) as Record<string, any>;
-
-          if (msg.type === "command_result" && msg.commandResult) {
-            const result = msg.commandResult as Record<string, any>;
-            const commandID = String(result.commandId ?? "");
-            const success = Boolean(result.success);
-            const error = String(result.error ?? "");
-            if (!commandID) return;
-            resolvePendingCommand(commandID, {
-              ok: success,
-              message: success
-                ? `${pendingCommandsRef.current.get(commandID)?.commandType ?? "command"}: success`
-                : `${pendingCommandsRef.current.get(commandID)?.commandType ?? "command"}: ${error || "failed"}`,
-            });
+          const worker = workerRef.current;
+          if (worker) {
+            const workerMsg: WorkerInboundMessage = { type: "decode", bytes: bytesBuffer };
+            worker.postMessage(workerMsg, [bytesBuffer]);
             return;
           }
 
-          if (msg.type === "node" && msg.node) {
-            const nodeMsg = msg.node as Record<string, any>;
-            const nodeId = String(nodeMsg.nodeId ?? "");
-            if (!nodeId) return;
-
-            const latestRaw: Record<string, Record<string, any>> = {};
-            const latestList = (nodeMsg.latest ?? []) as Array<Record<string, any>>;
-            for (const sample of latestList) {
-              const category = String(sample.category ?? "");
-              if (!category) continue;
-              latestRaw[category] = sample;
-            }
-
-            setNodes((prev) => {
-              const current = prev.find((n) => n.nodeId === nodeId);
-              return upsertNode(prev, {
-                nodeId,
-                connected: Boolean(nodeMsg.connected),
-                lastSeenUnixNano: toBigIntNs(nodeMsg.lastSeenUnixNano),
-                sourceIP: String(nodeMsg.sourceIp ?? current?.sourceIP ?? ""),
-                registration: (nodeMsg.registration ?? current?.registration ?? null) as
-                  | Record<string, any>
-                  | null,
-                latestRaw: {
-                  ...(current?.latestRaw ?? {}),
-                  ...latestRaw,
-                },
-              });
-            });
-            return;
-          }
-
-          if (msg.type !== "metric" || !msg.metric?.sample) {
-            return;
-          }
-
-          const timed = msg.metric as Record<string, any>;
-          const sample = timed.sample as Record<string, any>;
-          const nodeId = String(timed.nodeId ?? "");
-          const category = String(sample.category ?? "");
-          const atNs = toBigIntNs(sample.atUnixNano);
-          if (!nodeId || !category || atNs <= 0n) {
-            return;
-          }
-          const minIntervalMs =
-            category === "process" ? processMinSampleIntervalMsRef.current : minSampleIntervalMsRef.current;
-          const filteredSample = filterSampleByMinInterval(
-            nodeId,
-            category,
-            sample,
-            atNs,
-            minIntervalMs,
-            lastAcceptedPointByStreamRef.current,
-          );
-          if (!filteredSample) {
-            return;
-          }
-
-          const historyItem: RawHistorySample = {
-            atNs,
-            sample: filteredSample,
-          };
-          setHistory((prev) => pushHistory(prev, nodeId, category, historyItem, undefined, historyLimitsRef.current));
-
-          setNodes((prev) => {
-            const current = prev.find((n) => n.nodeId === nodeId);
-            return upsertNode(prev, {
-              nodeId,
-              connected: true,
-              lastSeenUnixNano: atNs,
-              sourceIP: current?.sourceIP ?? "",
-              registration: current?.registration ?? null,
-              latestRaw: {
-                ...(current?.latestRaw ?? {}),
-                [category]: filteredSample,
-              },
-            });
+          const decoded = decodeWSEventFromBytes(new Uint8Array(bytesBuffer), {
+            minSampleIntervalMs: minSampleIntervalMsRef.current,
+            processMinSampleIntervalMs: processMinSampleIntervalMsRef.current,
+            lastAcceptedByPoint: fallbackLastAcceptedPointByStreamRef.current,
           });
+          if (decoded) {
+            handleDecodedEventRef.current(decoded);
+          }
         } catch {
           // ignore decode errors
         }
@@ -460,6 +410,12 @@ export function useTelemetryWS() {
       socketRef.current = null;
       failAllPendingCommands("websocket closed");
       socket?.close();
+
+      if (decodeFlushTimerRef.current !== null) {
+        window.clearTimeout(decodeFlushTimerRef.current);
+        decodeFlushTimerRef.current = null;
+      }
+      decodeQueueRef.current = [];
     };
   }, []);
 
@@ -528,7 +484,11 @@ export function useTelemetryWS() {
     setHistoryLimits: (nextLimits: Partial<HistoryLimitSettings>) => {
       const normalized = normalizeHistoryLimitSettings(nextLimits);
       setHistoryLimitsState(normalized);
-      setHistory((prev) => applyHistoryLimits(prev, normalized));
+      setHistory((prev) => {
+        const next = applyHistoryLimits(prev, normalized);
+        totalHistoryPointsRef.current = countHistoryPoints(next);
+        return next;
+      });
     },
     setMinSampleIntervalMs: (value: number) => {
       setMinSampleIntervalMsState(normalizeMinSampleIntervalMs(value));

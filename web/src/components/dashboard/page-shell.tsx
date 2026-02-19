@@ -262,7 +262,6 @@ export function DashboardShell() {
                 <TabsContent value="process" className="space-y-3">
                   <ProcessModuleView
                     latestRaw={latestRaw}
-                    historyByCategory={historyByCategory}
                     cmdPending={cmdPending}
                     sendCommand={sendCommand}
                     cmdMsg={cmdMsg}

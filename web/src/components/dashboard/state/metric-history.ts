@@ -18,6 +18,11 @@ export type HistoryLimitSettings = {
   totalMaxPoints: number;
 };
 
+export type PushHistoryBatchResult = {
+  history: HistoryMap;
+  totalPoints: number;
+};
+
 function clampInt(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
   return Math.min(max, Math.max(min, Math.floor(value)));
@@ -80,6 +85,16 @@ function trimTotalHistoryPoints(history: HistoryMap, totalMaxPoints: number): Hi
   return next;
 }
 
+export function countHistoryPoints(history: HistoryMap): number {
+  let total = 0;
+  for (const nodeHistory of Object.values(history)) {
+    for (const list of Object.values(nodeHistory)) {
+      total += list.length;
+    }
+  }
+  return total;
+}
+
 export function applyHistoryLimits(history: HistoryMap, limitsInput: Partial<HistoryLimitSettings> | null | undefined): HistoryMap {
   const limits = normalizeHistoryLimitSettings(limitsInput);
 
@@ -107,23 +122,105 @@ export function pushHistory(
   retentionNs = defaultRetentionNs,
   limitsInput: Partial<HistoryLimitSettings> | null | undefined = defaultHistoryLimits,
 ): HistoryMap {
-  const limits = normalizeHistoryLimitSettings(limitsInput);
-  const nodeHistory = history[nodeId] ?? {};
-  const list = nodeHistory[category] ?? [];
-  const appended = [...list, sample];
-  const minTs = sample.atNs - retentionNs;
-  const timePruned = appended.filter((s) => s.atNs >= minTs);
-  const nextList =
-    timePruned.length > limits.perSeriesMaxPoints
-      ? timePruned.slice(timePruned.length - limits.perSeriesMaxPoints)
-      : timePruned;
+  return pushHistoryBatch(
+    history,
+    [{ nodeId, category, sample }],
+    retentionNs,
+    limitsInput,
+  );
+}
 
-  const next = {
-    ...history,
-    [nodeId]: {
+export function pushHistoryBatch(
+  history: HistoryMap,
+  updates: Array<{ nodeId: string; category: string; sample: RawHistorySample }>,
+  retentionNs = defaultRetentionNs,
+  limitsInput: Partial<HistoryLimitSettings> | null | undefined = defaultHistoryLimits,
+): HistoryMap {
+  return pushHistoryBatchWithTotal(history, updates, retentionNs, limitsInput).history;
+}
+
+export function pushHistoryBatchWithTotal(
+  history: HistoryMap,
+  updates: Array<{ nodeId: string; category: string; sample: RawHistorySample }>,
+  retentionNs = defaultRetentionNs,
+  limitsInput: Partial<HistoryLimitSettings> | null | undefined = defaultHistoryLimits,
+  totalPointsHint?: number,
+): PushHistoryBatchResult {
+  if (updates.length === 0) {
+    return {
+      history,
+      totalPoints: totalPointsHint ?? countHistoryPoints(history),
+    };
+  }
+
+  const limits = normalizeHistoryLimitSettings(limitsInput);
+  const grouped = new Map<string, Array<{ atNs: bigint; sample: RawHistorySample }>>();
+  for (const update of updates) {
+    const key = `${update.nodeId}\u0000${update.category}`;
+    const list = grouped.get(key) ?? [];
+    list.push({ atNs: update.sample.atNs, sample: update.sample });
+    grouped.set(key, list);
+  }
+
+  const next: HistoryMap = { ...history };
+  let changed = false;
+  let totalDelta = 0;
+
+  for (const [key, list] of grouped.entries()) {
+    const sep = key.indexOf("\u0000");
+    const nodeId = key.slice(0, sep);
+    const category = key.slice(sep + 1);
+
+    const nodeHistory = next[nodeId] ?? history[nodeId] ?? {};
+    const sourceList = nodeHistory[category] ?? [];
+    const sourceListLength = sourceList.length;
+    const additions = list.map((entry) => entry.sample);
+    if (additions.length === 0) continue;
+
+    let maxAtNs = additions[0].atNs;
+    for (let i = 1; i < additions.length; i += 1) {
+      if (additions[i].atNs > maxAtNs) maxAtNs = additions[i].atNs;
+    }
+
+    const appended = [...sourceList, ...additions];
+    const minTs = maxAtNs - retentionNs;
+    let start = 0;
+    while (start < appended.length && appended[start].atNs < minTs) {
+      start += 1;
+    }
+    const timePruned = start > 0 ? appended.slice(start) : appended;
+    const nextList =
+      timePruned.length > limits.perSeriesMaxPoints
+        ? timePruned.slice(timePruned.length - limits.perSeriesMaxPoints)
+        : timePruned;
+
+    next[nodeId] = {
       ...nodeHistory,
       [category]: nextList,
-    },
+    };
+    totalDelta += nextList.length - sourceListLength;
+    changed = true;
+  }
+
+  if (!changed) {
+    return {
+      history,
+      totalPoints: totalPointsHint ?? countHistoryPoints(history),
+    };
+  }
+
+  const nextTotalPoints =
+    totalPointsHint === undefined ? undefined : Math.max(0, totalPointsHint + totalDelta);
+  if (nextTotalPoints !== undefined && nextTotalPoints <= limits.totalMaxPoints) {
+    return {
+      history: next,
+      totalPoints: nextTotalPoints,
+    };
+  }
+
+  const trimmed = trimTotalHistoryPoints(next, limits.totalMaxPoints);
+  return {
+    history: trimmed,
+    totalPoints: countHistoryPoints(trimmed),
   };
-  return trimTotalHistoryPoints(next, limits.totalMaxPoints);
 }

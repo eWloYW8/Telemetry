@@ -21,6 +21,11 @@ import {
 } from "@/components/ui/select";
 
 import type { ChartLineDef } from "../../types";
+import {
+  defaultChartRenderMaxPoints,
+  loadChartRenderMaxPoints,
+  uiSettingsChangedEventName,
+} from "../../state/ui-settings";
 import { nsToPreciseLabel, toBigIntNs } from "../../utils/time";
 import { formatNumber } from "../../utils/units";
 
@@ -58,6 +63,26 @@ function rowTsNs(row: Record<string, number | string>): bigint {
   return toBigIntNs((row.tsNs ?? row.ts_ns ?? 0) as string | number);
 }
 
+function downsampleRows(rows: ChartDataRow[], maxPoints: number): ChartDataRow[] {
+  if (rows.length <= maxPoints) return rows;
+  if (maxPoints <= 2) return [rows[0], rows[rows.length - 1]];
+
+  const next: ChartDataRow[] = [];
+  const step = (rows.length - 1) / (maxPoints - 1);
+  let lastIdx = -1;
+
+  for (let i = 0; i < maxPoints; i += 1) {
+    const idx = i === maxPoints - 1 ? rows.length - 1 : Math.round(i * step);
+    if (idx === lastIdx) continue;
+    next.push(rows[idx]);
+    lastIdx = idx;
+  }
+  if (next[next.length - 1] !== rows[rows.length - 1]) {
+    next.push(rows[rows.length - 1]);
+  }
+  return next;
+}
+
 export function MetricChart({
   chartId,
   title,
@@ -71,6 +96,7 @@ export function MetricChart({
 }: MetricChartProps) {
   const storageKey = `telemetry.chart.window.${chartId}`;
   const [windowSec, setWindowSec] = useState<number>(defaultWindowSec);
+  const [maxRenderPoints, setMaxRenderPoints] = useState<number>(defaultChartRenderMaxPoints);
 
   useEffect(() => {
     try {
@@ -92,6 +118,13 @@ export function MetricChart({
       // ignore localStorage errors
     }
   }, [storageKey, windowSec]);
+
+  useEffect(() => {
+    const sync = () => setMaxRenderPoints(loadChartRenderMaxPoints());
+    sync();
+    window.addEventListener(uiSettingsChangedEventName, sync);
+    return () => window.removeEventListener(uiSettingsChangedEventName, sync);
+  }, []);
 
   const { chartData, xDomain } = useMemo(() => {
     const fallbackLatest = BigInt(Date.now()) * 1_000_000n;
@@ -120,10 +153,10 @@ export function MetricChart({
     }));
 
     return {
-      chartData: rows,
+      chartData: downsampleRows(rows, maxRenderPoints),
       xDomain: [Number(minTs / 1_000_000n), Number(latest / 1_000_000n)] as [number, number],
     };
-  }, [data, windowSec]);
+  }, [data, windowSec, maxRenderPoints]);
 
   const formatXAxisTick = (value: number): string => {
     const d = new Date(value);
@@ -242,7 +275,7 @@ export function MetricChart({
         let bestTs = -1n;
         let bestValue: number | null = null;
 
-        for (const row of data) {
+        for (const row of chartData) {
           const ts = rowTsNs(row);
           if (ts <= 0n) continue;
           const raw = row[line.key];
@@ -255,8 +288,8 @@ export function MetricChart({
         }
 
         if (bestValue === null) {
-          for (let i = data.length - 1; i >= 0; i -= 1) {
-            const raw = data[i]?.[line.key];
+          for (let i = chartData.length - 1; i >= 0; i -= 1) {
+            const raw = chartData[i]?.[line.key];
             const value = typeof raw === "number" ? raw : Number(raw);
             if (Number.isFinite(value)) {
               bestValue = value;
@@ -271,7 +304,7 @@ export function MetricChart({
         return { line, text };
       })
       .filter((item): item is { line: ChartLineDef; text: string } => item !== null);
-  }, [showCurrentStatus, lines, data, currentValueFormatter]);
+  }, [showCurrentStatus, lines, chartData, currentValueFormatter]);
 
   return (
     <div className="telemetry-panel overflow-hidden">
