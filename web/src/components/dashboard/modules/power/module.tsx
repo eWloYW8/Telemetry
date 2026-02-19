@@ -854,9 +854,11 @@ function BatchControlSlider({
   step,
   initialValue,
   currentValue,
+  resetKey,
   valueFormatter,
   tickFormatter,
   enabled,
+  onValueChange,
   onApply,
 }: {
   title: string;
@@ -865,9 +867,11 @@ function BatchControlSlider({
   step: number;
   initialValue: number | null;
   currentValue: number | null;
+  resetKey: string;
   valueFormatter: (value: number) => string;
   tickFormatter: (value: number) => string;
   enabled: boolean;
+  onValueChange?: (value: number) => void;
   onApply: (value: number) => void;
 }) {
   const normalizedMin = Math.min(min, max);
@@ -884,7 +888,7 @@ function BatchControlSlider({
   useEffect(() => {
     if (isEditing) return;
     setValue((prev) => (Math.abs(prev - normalizedInitialValue) < 1 ? prev : normalizedInitialValue));
-  }, [isEditing, normalizedInitialValue]);
+  }, [isEditing, normalizedInitialValue, resetKey]);
 
   const control = useThrottledEmitter<number>((next) => onApply(next), 100);
 
@@ -907,12 +911,14 @@ function BatchControlSlider({
           const next = clamp(v[0] ?? value, normalizedMin, normalizedMax);
           setIsEditing(true);
           setValue(next);
+          onValueChange?.(next);
           control.send(next);
         }}
         onValueCommit={(v) => {
           if (!enabled) return;
           const next = clamp(v[0] ?? value, normalizedMin, normalizedMax);
           setValue(next);
+          onValueChange?.(next);
           control.flush(next);
           setIsEditing(false);
         }}
@@ -1235,6 +1241,7 @@ function CpuPowerCapControlItem({
   sendCommand,
   option,
   selected,
+  forcedValue,
   selectionDisabled,
   onToggleSelection,
   showControls,
@@ -1244,6 +1251,7 @@ function CpuPowerCapControlItem({
   sendCommand: PowerModuleViewProps["sendCommand"];
   option: SelectionOption;
   selected: boolean;
+  forcedValue: number | null;
   selectionDisabled: boolean;
   onToggleSelection: (checked: boolean) => void;
   showControls: boolean;
@@ -1263,11 +1271,18 @@ function CpuPowerCapControlItem({
   const syncBlockUntilRef = useRef(0);
 
   useEffect(() => {
+    if (selected && forcedValue !== null) return;
     if (isEditing) return;
     if (Date.now() < syncBlockUntilRef.current) return;
     const next = clamp(backendCurrent, minBound, maxBound);
     setCap((prev) => (Math.abs(prev - next) < 1 ? prev : next));
-  }, [isEditing, backendCurrent, minBound, maxBound]);
+  }, [selected, forcedValue, isEditing, backendCurrent, minBound, maxBound]);
+
+  useEffect(() => {
+    if (!selected || forcedValue === null) return;
+    const next = clamp(forcedValue, minBound, maxBound);
+    setCap((prev) => (Math.abs(prev - next) < 1 ? prev : next));
+  }, [selected, forcedValue, minBound, maxBound]);
 
   const control = useThrottledEmitter<number>((value) => {
     dispatchControlCommand(sendCommand, device.nodeId, "cpu_power_cap", {
@@ -1300,6 +1315,7 @@ function CpuPowerCapControlItem({
           currentValue={currentUsage > 0 ? currentUsage : null}
           valueFormatter={(value) => formatPowerMicroW(value)}
           tickFormatter={(value) => formatNumber(value / 1_000_000, 0)}
+          disabled={Boolean(selected && forcedValue !== null)}
           onValueChange={(v) => {
             const next = clamp(v[0] ?? cap, minBound, maxBound);
             setIsEditing(true);
@@ -1507,6 +1523,7 @@ function GpuPowerCapControlItem({
   sendCommand,
   option,
   selected,
+  forcedValue,
   selectionDisabled,
   onToggleSelection,
   showControls,
@@ -1515,6 +1532,7 @@ function GpuPowerCapControlItem({
   sendCommand: PowerModuleViewProps["sendCommand"];
   option: SelectionOption;
   selected: boolean;
+  forcedValue: number | null;
   selectionDisabled: boolean;
   onToggleSelection: (checked: boolean) => void;
   showControls: boolean;
@@ -1524,11 +1542,18 @@ function GpuPowerCapControlItem({
   const syncBlockUntilRef = useRef(0);
 
   useEffect(() => {
+    if (selected && forcedValue !== null) return;
     if (isEditing) return;
     if (Date.now() < syncBlockUntilRef.current) return;
     const next = clamp(device.powerCurrentCapMilliW, device.powerMinMilliW, device.powerMaxMilliW);
     setCap((prev) => (Math.abs(prev - next) < 1 ? prev : next));
-  }, [isEditing, device.powerCurrentCapMilliW, device.powerMinMilliW, device.powerMaxMilliW]);
+  }, [selected, forcedValue, isEditing, device.powerCurrentCapMilliW, device.powerMinMilliW, device.powerMaxMilliW]);
+
+  useEffect(() => {
+    if (!selected || forcedValue === null) return;
+    const next = clamp(forcedValue, device.powerMinMilliW, device.powerMaxMilliW);
+    setCap((prev) => (Math.abs(prev - next) < 1 ? prev : next));
+  }, [selected, forcedValue, device.powerMinMilliW, device.powerMaxMilliW]);
 
   const control = useThrottledEmitter<number>((value) => {
     dispatchControlCommand(sendCommand, device.nodeId, "gpu_power_cap", {
@@ -1560,6 +1585,7 @@ function GpuPowerCapControlItem({
           currentValue={device.powerCurrentUsageMilliW > 0 ? device.powerCurrentUsageMilliW : null}
           valueFormatter={(value) => formatPowerMilliW(value)}
           tickFormatter={(value) => formatNumber(value / 1000, 0)}
+          disabled={Boolean(selected && forcedValue !== null)}
           onValueChange={(v) => {
             const next = clamp(v[0] ?? cap, device.powerMinMilliW, device.powerMaxMilliW);
             setIsEditing(true);
@@ -1789,6 +1815,9 @@ export function PowerModuleView({ nodes, history, sendCommand }: PowerModuleView
     (device) => device.memCurrentMin,
     (device) => device.memCurrentMax,
   );
+  const cpuPackageCapAvgValueRef = useRef<number | null>(cpuPackageCapAvgValue);
+  const cpuDramCapAvgValueRef = useRef<number | null>(cpuDramCapAvgValue);
+  const gpuPowerAvgValueRef = useRef<number | null>(gpuPowerAvgValue);
 
   const cpuCoreSelectionKey = useMemo(
     () => selectionSignature(cpuCoreSelection.selectedIds),
@@ -1802,11 +1831,26 @@ export function PowerModuleView({ nodes, history, sendCommand }: PowerModuleView
     () => selectionSignature(gpuClockSelection.selectedIds),
     [gpuClockSelection.selectedIds],
   );
+  const cpuPackageCapSelectionKey = useMemo(
+    () => selectionSignature(cpuPackageCapSelection.selectedIds),
+    [cpuPackageCapSelection.selectedIds],
+  );
+  const cpuDramCapSelectionKey = useMemo(
+    () => selectionSignature(cpuDramCapSelection.selectedIds),
+    [cpuDramCapSelection.selectedIds],
+  );
+  const gpuPowerSelectionKey = useMemo(
+    () => selectionSignature(gpuPowerSelection.selectedIds),
+    [gpuPowerSelection.selectedIds],
+  );
 
   const [cpuCoreBatchRange, setCpuCoreBatchRange] = useState<[number, number] | null>(null);
   const [cpuUncoreBatchRange, setCpuUncoreBatchRange] = useState<[number, number] | null>(null);
   const [gpuClockSmBatchRange, setGpuClockSmBatchRange] = useState<[number, number] | null>(null);
   const [gpuClockMemBatchRange, setGpuClockMemBatchRange] = useState<[number, number] | null>(null);
+  const [cpuPackageCapBatchValue, setCpuPackageCapBatchValue] = useState<number | null>(null);
+  const [cpuDramCapBatchValue, setCpuDramCapBatchValue] = useState<number | null>(null);
+  const [gpuPowerBatchValue, setGpuPowerBatchValue] = useState<number | null>(null);
 
   useEffect(() => {
     setCpuCoreBatchRange(cpuCoreAvgRange);
@@ -1820,6 +1864,30 @@ export function PowerModuleView({ nodes, history, sendCommand }: PowerModuleView
     setGpuClockSmBatchRange(gpuClockSmAvgRange);
     setGpuClockMemBatchRange(gpuClockMemAvgRange);
   }, [gpuClockSelectionKey]);
+
+  useEffect(() => {
+    cpuPackageCapAvgValueRef.current = cpuPackageCapAvgValue;
+  }, [cpuPackageCapAvgValue]);
+
+  useEffect(() => {
+    cpuDramCapAvgValueRef.current = cpuDramCapAvgValue;
+  }, [cpuDramCapAvgValue]);
+
+  useEffect(() => {
+    gpuPowerAvgValueRef.current = gpuPowerAvgValue;
+  }, [gpuPowerAvgValue]);
+
+  useEffect(() => {
+    setCpuPackageCapBatchValue(cpuPackageCapAvgValueRef.current);
+  }, [cpuPackageCapSelectionKey]);
+
+  useEffect(() => {
+    setCpuDramCapBatchValue(cpuDramCapAvgValueRef.current);
+  }, [cpuDramCapSelectionKey]);
+
+  useEffect(() => {
+    setGpuPowerBatchValue(gpuPowerAvgValueRef.current);
+  }, [gpuPowerSelectionKey]);
 
   return (
     <div className="grid gap-3 lg:h-full lg:min-h-0 lg:grid-cols-[4fr_3fr_3fr] lg:grid-rows-1 lg:overflow-hidden">
@@ -2049,6 +2117,7 @@ export function PowerModuleView({ nodes, history, sendCommand }: PowerModuleView
                         sendCommand={sendCommand}
                         option={option}
                         selected={cpuPackageCapSelection.isSelected(option.id)}
+                        forcedValue={cpuPackageCapSelection.isSelected(option.id) ? cpuPackageCapBatchValue : null}
                         selectionDisabled={cpuPackageCapSelection.isDisabled(option)}
                         onToggleSelection={(checked) => cpuPackageCapSelection.toggle(option, checked)}
                         showControls={open}
@@ -2065,11 +2134,13 @@ export function PowerModuleView({ nodes, history, sendCommand }: PowerModuleView
                   min={cpuPackageCapBatchSource.packagePowerMinMicroW}
                   max={cpuPackageCapBatchSource.packagePowerMaxMicroW}
                   step={1000}
-                  initialValue={cpuPackageCapAvgValue}
+                  initialValue={cpuPackageCapBatchValue ?? cpuPackageCapAvgValue}
                   currentValue={cpuPackageCapAvgMarker}
+                  resetKey={cpuPackageCapSelectionKey}
                   valueFormatter={(value) => formatPowerMicroW(value)}
                   tickFormatter={(value) => formatNumber(value / 1_000_000, 0)}
                   enabled={cpuPackageCapSelectedDevices.length > 0}
+                  onValueChange={(value) => setCpuPackageCapBatchValue(value)}
                   onApply={(value) => {
                     for (const device of cpuPackageCapSelectedDevices) {
                       dispatchControlCommand(sendCommand, device.nodeId, "cpu_power_cap", {
@@ -2106,6 +2177,7 @@ export function PowerModuleView({ nodes, history, sendCommand }: PowerModuleView
                         sendCommand={sendCommand}
                         option={option}
                         selected={cpuDramCapSelection.isSelected(option.id)}
+                        forcedValue={cpuDramCapSelection.isSelected(option.id) ? cpuDramCapBatchValue : null}
                         selectionDisabled={cpuDramCapSelection.isDisabled(option)}
                         onToggleSelection={(checked) => cpuDramCapSelection.toggle(option, checked)}
                         showControls={open}
@@ -2122,11 +2194,13 @@ export function PowerModuleView({ nodes, history, sendCommand }: PowerModuleView
                   min={cpuDramCapBatchSource.dramPowerMinMicroW}
                   max={cpuDramCapBatchSource.dramPowerMaxMicroW}
                   step={1000}
-                  initialValue={cpuDramCapAvgValue}
+                  initialValue={cpuDramCapBatchValue ?? cpuDramCapAvgValue}
                   currentValue={cpuDramCapAvgMarker}
+                  resetKey={cpuDramCapSelectionKey}
                   valueFormatter={(value) => formatPowerMicroW(value)}
                   tickFormatter={(value) => formatNumber(value / 1_000_000, 0)}
                   enabled={cpuDramCapSelectedDevices.length > 0}
+                  onValueChange={(value) => setCpuDramCapBatchValue(value)}
                   onApply={(value) => {
                     for (const device of cpuDramCapSelectedDevices) {
                       dispatchControlCommand(sendCommand, device.nodeId, "cpu_power_cap", {
@@ -2266,6 +2340,7 @@ export function PowerModuleView({ nodes, history, sendCommand }: PowerModuleView
                         sendCommand={sendCommand}
                         option={option}
                         selected={gpuPowerSelection.isSelected(option.id)}
+                        forcedValue={gpuPowerSelection.isSelected(option.id) ? gpuPowerBatchValue : null}
                         selectionDisabled={gpuPowerSelection.isDisabled(option)}
                         onToggleSelection={(checked) => gpuPowerSelection.toggle(option, checked)}
                         showControls={open}
@@ -2282,11 +2357,13 @@ export function PowerModuleView({ nodes, history, sendCommand }: PowerModuleView
                   min={gpuPowerBatchSource.powerMinMilliW}
                   max={gpuPowerBatchSource.powerMaxMilliW}
                   step={1}
-                  initialValue={gpuPowerAvgValue}
+                  initialValue={gpuPowerBatchValue ?? gpuPowerAvgValue}
                   currentValue={gpuPowerAvgMarker}
+                  resetKey={gpuPowerSelectionKey}
                   valueFormatter={(value) => formatPowerMilliW(value)}
                   tickFormatter={(value) => formatNumber(value / 1000, 0)}
                   enabled={gpuPowerSelectedDevices.length > 0}
+                  onValueChange={(value) => setGpuPowerBatchValue(value)}
                   onApply={(value) => {
                     for (const device of gpuPowerSelectedDevices) {
                       dispatchControlCommand(sendCommand, device.nodeId, "gpu_power_cap", {
