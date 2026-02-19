@@ -12,6 +12,11 @@ import {
   normalizeHistoryLimitSettings,
   type HistoryLimitSettings,
 } from "../../state/metric-history";
+import {
+  defaultRichControlSliderGradientEnabled,
+  loadRichControlSliderGradientEnabled,
+  saveRichControlSliderGradientEnabled,
+} from "../../state/ui-settings";
 
 type SettingsModuleViewProps = {
   historyLimits: HistoryLimitSettings;
@@ -36,6 +41,7 @@ export function SettingsModuleView({
   const [processMinSampleIntervalValue, setProcessMinSampleIntervalValue] = useState(
     String(processMinSampleIntervalMs),
   );
+  const [richSliderGradientEnabled, setRichSliderGradientEnabled] = useState(defaultRichControlSliderGradientEnabled);
 
   useEffect(() => {
     setPerSeriesValue(String(historyLimits.perSeriesMaxPoints));
@@ -49,6 +55,10 @@ export function SettingsModuleView({
   useEffect(() => {
     setProcessMinSampleIntervalValue(String(processMinSampleIntervalMs));
   }, [processMinSampleIntervalMs]);
+
+  useEffect(() => {
+    setRichSliderGradientEnabled(loadRichControlSliderGradientEnabled());
+  }, []);
 
   const normalizedPreview = useMemo(
     () =>
@@ -106,6 +116,18 @@ export function SettingsModuleView({
               onChange={(e) => setProcessMinSampleIntervalValue(e.target.value)}
             />
           </label>
+          <label className="space-y-1">
+            <div className="text-sm font-medium text-[var(--telemetry-text)]">RichControlSlider Gradient</div>
+            <div className="flex h-10 items-center rounded-md border border-input bg-background px-3">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-[var(--telemetry-accent)]"
+                checked={richSliderGradientEnabled}
+                onChange={(e) => setRichSliderGradientEnabled(e.target.checked)}
+              />
+              <span className="ml-2 text-sm text-[var(--telemetry-text)]">Enable Gradient</span>
+            </div>
+          </label>
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -118,6 +140,7 @@ export function SettingsModuleView({
               });
               onSaveMinSampleIntervalMs(Number(minSampleIntervalValue));
               onSaveProcessMinSampleIntervalMs(Number(processMinSampleIntervalValue));
+              saveRichControlSliderGradientEnabled(richSliderGradientEnabled);
             }}
           >
             Save
@@ -131,9 +154,11 @@ export function SettingsModuleView({
               setTotalValue(String(defaults.totalMaxPoints));
               setMinSampleIntervalValue("0");
               setProcessMinSampleIntervalValue("0");
+              setRichSliderGradientEnabled(defaultRichControlSliderGradientEnabled);
               onSaveHistoryLimits(defaults);
               onSaveMinSampleIntervalMs(0);
               onSaveProcessMinSampleIntervalMs(0);
+              saveRichControlSliderGradientEnabled(defaultRichControlSliderGradientEnabled);
             }}
           >
             Reset Defaults

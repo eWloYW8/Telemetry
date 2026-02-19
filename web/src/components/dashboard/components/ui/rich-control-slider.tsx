@@ -4,6 +4,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 
 import { cn } from "@/lib/utils";
+import {
+  defaultRichControlSliderGradientEnabled,
+  loadRichControlSliderGradientEnabled,
+  richControlSliderGradientEnabledStorageKey,
+  uiSettingsChangedEventName,
+} from "../../state/ui-settings";
 
 type RichControlSliderProps = {
   className?: string;
@@ -283,6 +289,25 @@ export function RichControlSlider({
   const [currentDisplayPercent, setCurrentDisplayPercent] = useState<number | null>(currentTargetPercent);
   const thumbDisplayRef = useRef<number[]>(thumbTargetPercents);
   const currentDisplayRef = useRef<number | null>(currentTargetPercent);
+  const [gradientEnabled, setGradientEnabled] = useState(defaultRichControlSliderGradientEnabled);
+
+  useEffect(() => {
+    const refresh = () => setGradientEnabled(loadRichControlSliderGradientEnabled());
+    refresh();
+
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== richControlSliderGradientEnabledStorageKey) return;
+      refresh();
+    };
+    const onUiSettingsChanged = () => refresh();
+
+    window.addEventListener("storage", onStorage);
+    window.addEventListener(uiSettingsChangedEventName, onUiSettingsChanged);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener(uiSettingsChangedEventName, onUiSettingsChanged);
+    };
+  }, []);
 
   useEffect(() => {
     thumbDisplayRef.current = thumbDisplayPercents;
@@ -293,6 +318,25 @@ export function RichControlSlider({
   }, [currentDisplayPercent]);
 
   useEffect(() => {
+    if (!gradientEnabled) {
+      const prevThumb = thumbDisplayRef.current;
+      const thumbSameLength = prevThumb.length === thumbTargetPercents.length;
+      const thumbUnchanged =
+        thumbSameLength &&
+        prevThumb.every((value, index) => Math.abs(value - (thumbTargetPercents[index] ?? value)) <= 1e-6);
+      if (!thumbUnchanged) {
+        thumbDisplayRef.current = thumbTargetPercents;
+        setThumbDisplayPercents(thumbTargetPercents);
+      }
+
+      const nextCurrent = currentTargetPercent;
+      if (currentDisplayRef.current !== nextCurrent) {
+        currentDisplayRef.current = nextCurrent;
+        setCurrentDisplayPercent(nextCurrent);
+      }
+      return;
+    }
+
     let raf = 0;
     const alphaThumb = 0.9;
     const alphaCurrent = 0.5;
@@ -350,7 +394,7 @@ export function RichControlSlider({
 
     raf = window.requestAnimationFrame(tick);
     return () => window.cancelAnimationFrame(raf);
-  }, [thumbTargetPercents, currentTargetPercent, isDragging]);
+  }, [thumbTargetPercents, currentTargetPercent, isDragging, gradientEnabled]);
 
   const hasRange = values.length > 1;
   const showBadges = showValueBadges;
