@@ -299,7 +299,7 @@ export function MetricChart({
             <SelectTrigger size="sm" className="h-7 w-[84px] bg-[var(--telemetry-surface-soft)] text-xs">
               <SelectValue />
             </SelectTrigger>
-            <SelectContent align="end">
+            <SelectContent align="end" position="popper" side="bottom" sideOffset={4} collisionPadding={8}>
               {windowOptions.map((opt) => (
                 <SelectItem key={opt.value} value={String(opt.value)}>
                   {opt.label}
