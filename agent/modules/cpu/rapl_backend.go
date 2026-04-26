@@ -2,14 +2,13 @@ package cpu
 
 import (
 	"fmt"
-	"math"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
-
-	esmi "github.com/eWloYW8/esmi-go"
 )
 
 type raplBackend interface {
@@ -156,24 +155,25 @@ func (b *intelRAPLBackend) ReadTemperatures() []PackageTemperature {
 }
 
 type amdRAPLBackend struct {
-	client        *esmi.Client
-	socketByPkgID map[int]uint32
+	sensorsByPkgID map[int]amdHSMPSensor
+
+	mu               sync.Mutex
+	energyByPkgID    map[int]uint64
+	lastSampleByPkgID map[int]time.Time
+}
+
+type amdHSMPSensor struct {
+	socketID        int
+	hwmonPath       string
+	powerInputPath  string
+	powerCapPath    string
+	maxPowerCapPath string
 }
 
 func newAMDRAPLBackend(mappings []CoreMapping) (*amdRAPLBackend, error) {
-	client, err := esmi.NewClient()
-	if err != nil {
-		return nil, err
-	}
-
-	socketCount, err := client.NumberOfSockets()
-	if err != nil {
-		_ = client.Close()
-		return nil, err
-	}
-	if socketCount == 0 {
-		_ = client.Close()
-		return nil, fmt.Errorf("esmi reports zero sockets")
+	sensors := discoverAMDHSMPHwmonSensors()
+	if len(sensors) == 0 {
+		return nil, fmt.Errorf("amd hsmp hwmon sensors are unavailable")
 	}
 
 	pkgIDs := make([]int, 0, 8)
@@ -187,131 +187,213 @@ func newAMDRAPLBackend(mappings []CoreMapping) (*amdRAPLBackend, error) {
 	}
 	sort.Ints(pkgIDs)
 
-	socketByPkgID, err := buildPackageSocketMap(pkgIDs, socketCount)
+	sensorsByPkgID, err := buildPackageHSMPSensorMap(pkgIDs, sensors)
 	if err != nil {
-		_ = client.Close()
 		return nil, err
 	}
 
 	return &amdRAPLBackend{
-		client:        client,
-		socketByPkgID: socketByPkgID,
+		sensorsByPkgID:    sensorsByPkgID,
+		energyByPkgID:     make(map[int]uint64, len(sensorsByPkgID)),
+		lastSampleByPkgID: make(map[int]time.Time, len(sensorsByPkgID)),
 	}, nil
 }
 
-func buildPackageSocketMap(pkgIDs []int, socketCount uint32) (map[int]uint32, error) {
+func discoverAMDHSMPHwmonSensors() []amdHSMPSensor {
+	const root = "/sys/devices/platform/amd_hsmp/hwmon"
+
+	hwmons, _ := filepath.Glob(filepath.Join(root, "hwmon*"))
+	sort.Slice(hwmons, func(i, j int) bool {
+		left := extractPackageID(filepath.Base(hwmons[i]))
+		right := extractPackageID(filepath.Base(hwmons[j]))
+		if left == right {
+			return hwmons[i] < hwmons[j]
+		}
+		if left < 0 {
+			return false
+		}
+		if right < 0 {
+			return true
+		}
+		return left < right
+	})
+
+	sensors := make([]amdHSMPSensor, 0, len(hwmons))
+	for _, hwmon := range hwmons {
+		name, err := readTrimmed(filepath.Join(hwmon, "name"))
+		if err != nil || !strings.EqualFold(name, "amd_hsmp_hwmon") {
+			continue
+		}
+
+		inputPath := filepath.Join(hwmon, "power1_input")
+		if _, err := readUint(inputPath); err != nil {
+			continue
+		}
+
+		socketID := len(sensors)
+		if id, err := readInt(filepath.Join(hwmon, "socket_id")); err == nil && id >= 0 {
+			socketID = int(id)
+		}
+
+		sensors = append(sensors, amdHSMPSensor{
+			socketID:        socketID,
+			hwmonPath:       hwmon,
+			powerInputPath:  inputPath,
+			powerCapPath:    filepath.Join(hwmon, "power1_cap"),
+			maxPowerCapPath: filepath.Join(hwmon, "power1_cap_max"),
+		})
+	}
+	sort.Slice(sensors, func(i, j int) bool {
+		if sensors[i].socketID == sensors[j].socketID {
+			return sensors[i].hwmonPath < sensors[j].hwmonPath
+		}
+		return sensors[i].socketID < sensors[j].socketID
+	})
+	return sensors
+}
+
+func buildPackageHSMPSensorMap(pkgIDs []int, sensors []amdHSMPSensor) (map[int]amdHSMPSensor, error) {
 	if len(pkgIDs) == 0 {
 		return nil, fmt.Errorf("no cpu package found")
+	}
+	if len(sensors) == 0 {
+		return nil, fmt.Errorf("no amd hsmp hwmon sensor found")
+	}
+
+	sensorBySocketID := make(map[int]amdHSMPSensor, len(sensors))
+	for _, sensor := range sensors {
+		if _, exists := sensorBySocketID[sensor.socketID]; exists {
+			continue
+		}
+		sensorBySocketID[sensor.socketID] = sensor
 	}
 
 	allDirect := true
 	for _, pkgID := range pkgIDs {
-		if pkgID < 0 || uint32(pkgID) >= socketCount {
+		if pkgID < 0 {
+			allDirect = false
+			break
+		}
+		if _, ok := sensorBySocketID[pkgID]; !ok {
 			allDirect = false
 			break
 		}
 	}
-	mapping := make(map[int]uint32, len(pkgIDs))
+	mapping := make(map[int]amdHSMPSensor, len(pkgIDs))
 	if allDirect {
 		for _, pkgID := range pkgIDs {
-			mapping[pkgID] = uint32(pkgID)
+			mapping[pkgID] = sensorBySocketID[pkgID]
 		}
 		return mapping, nil
 	}
 
-	if int(socketCount) != len(pkgIDs) {
-		return nil, fmt.Errorf("cannot map packages %v to %d esmi sockets", pkgIDs, socketCount)
+	if len(sensors) != len(pkgIDs) {
+		return nil, fmt.Errorf("cannot map packages %v to %d amd hsmp hwmon sensors", pkgIDs, len(sensors))
 	}
 	for i, pkgID := range pkgIDs {
-		mapping[pkgID] = uint32(i)
+		mapping[pkgID] = sensors[i]
 	}
 	return mapping, nil
 }
 
 func (b *amdRAPLBackend) ReadAll() []PackageRAPL {
-	if b == nil || b.client == nil || len(b.socketByPkgID) == 0 {
+	if b == nil || len(b.sensorsByPkgID) == 0 {
 		return nil
 	}
 
-	pkgIDs := make([]int, 0, len(b.socketByPkgID))
-	for pkgID := range b.socketByPkgID {
+	pkgIDs := make([]int, 0, len(b.sensorsByPkgID))
+	for pkgID := range b.sensorsByPkgID {
 		pkgIDs = append(pkgIDs, pkgID)
 	}
 	sort.Ints(pkgIDs)
 
 	out := make([]PackageRAPL, 0, len(pkgIDs))
 	for _, pkgID := range pkgIDs {
-		socketID := b.socketByPkgID[pkgID]
-		energyMicroJ, err := b.client.SocketEnergy(socketID)
+		sensor := b.sensorsByPkgID[pkgID]
+		powerMicroW, err := readUint(sensor.powerInputPath)
 		if err != nil {
 			continue
 		}
-		capMilliW, err := b.client.SocketPowerCap(socketID)
+		sampledAt := time.Now()
+		energyMicroJ := b.integrateEnergy(pkgID, powerMicroW, sampledAt)
+
 		powerCapMicroW := uint64(0)
-		if err == nil {
-			powerCapMicroW = uint64(capMilliW) * 1000
+		if cap, err := readUint(sensor.powerCapPath); err == nil {
+			powerCapMicroW = cap
 		}
-		sampledAt := time.Now().UnixNano()
 		out = append(out, PackageRAPL{
 			PackageID:      pkgID,
 			EnergyMicroJ:   energyMicroJ,
 			PowerCapMicroW: powerCapMicroW,
-			SampledAtNano:  sampledAt,
+			SampledAtNano:  sampledAt.UnixNano(),
 		})
 	}
 	return out
 }
 
+func (b *amdRAPLBackend) integrateEnergy(pkgID int, powerMicroW uint64, sampledAt time.Time) uint64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	energy := b.energyByPkgID[pkgID]
+	if prev, ok := b.lastSampleByPkgID[pkgID]; ok && sampledAt.After(prev) {
+		elapsed := sampledAt.Sub(prev)
+		seconds := uint64(elapsed / time.Second)
+		remainder := uint64(elapsed % time.Second)
+		energy += powerMicroW*seconds + powerMicroW*remainder/uint64(time.Second)
+		b.energyByPkgID[pkgID] = energy
+	}
+	b.lastSampleByPkgID[pkgID] = sampledAt
+	return energy
+}
+
 func (b *amdRAPLBackend) SetPowerCap(pkgID int, microWatt uint64, domain PowerCapDomain) error {
-	if b == nil || b.client == nil {
+	if b == nil || len(b.sensorsByPkgID) == 0 {
 		return fmt.Errorf("amd rapl backend is unavailable")
 	}
 	if domain == PowerCapDomainDRAM {
 		return fmt.Errorf("dram power cap control is unavailable for package %d", pkgID)
 	}
-	socketID, ok := b.socketByPkgID[pkgID]
+	sensor, ok := b.sensorsByPkgID[pkgID]
 	if !ok {
 		return fmt.Errorf("power cap control is unavailable for package %d", pkgID)
 	}
+
 	milliWatt := microWatt / 1000
 	if milliWatt == 0 {
 		milliWatt = 1
 	}
-	if maxCapMilliW, err := b.client.SocketPowerCapMax(socketID); err == nil && maxCapMilliW > 0 && milliWatt > uint64(maxCapMilliW) {
-		milliWatt = uint64(maxCapMilliW)
+	targetMicroW := milliWatt * 1000
+	if maxMicroW, err := readUint(sensor.maxPowerCapPath); err == nil && maxMicroW > 0 && targetMicroW > maxMicroW {
+		targetMicroW = maxMicroW
 	}
-	if milliWatt > math.MaxUint32 {
-		return fmt.Errorf("power cap %d microW exceeds amd esmi range", microWatt)
-	}
-	if err := b.client.SetSocketPowerCap(socketID, uint32(milliWatt)); err != nil {
+	if err := os.WriteFile(sensor.powerCapPath, []byte(strconv.FormatUint(targetMicroW, 10)), 0o644); err != nil {
 		return fmt.Errorf("set package %d power cap: %w", pkgID, err)
 	}
 	return nil
 }
 
 func (b *amdRAPLBackend) ReadControlRanges() []PackagePowerCapRange {
-	if b == nil || b.client == nil || len(b.socketByPkgID) == 0 {
+	if b == nil || len(b.sensorsByPkgID) == 0 {
 		return nil
 	}
 
-	pkgIDs := make([]int, 0, len(b.socketByPkgID))
-	for pkgID := range b.socketByPkgID {
+	pkgIDs := make([]int, 0, len(b.sensorsByPkgID))
+	for pkgID := range b.sensorsByPkgID {
 		pkgIDs = append(pkgIDs, pkgID)
 	}
 	sort.Ints(pkgIDs)
 
 	out := make([]PackagePowerCapRange, 0, len(pkgIDs))
 	for _, pkgID := range pkgIDs {
-		socketID := b.socketByPkgID[pkgID]
-		capMilliW, err := b.client.SocketPowerCap(socketID)
 		current := uint64(0)
-		if err == nil {
-			current = uint64(capMilliW) * 1000
+		sensor := b.sensorsByPkgID[pkgID]
+		if cap, err := readUint(sensor.powerCapPath); err == nil {
+			current = cap
 		}
-		maxCapMilliW, err := b.client.SocketPowerCapMax(socketID)
 		maxMicroW := uint64(0)
-		if err == nil {
-			maxMicroW = uint64(maxCapMilliW) * 1000
+		if maxCap, err := readUint(sensor.maxPowerCapPath); err == nil {
+			maxMicroW = maxCap
 		}
 		out = append(out, PackagePowerCapRange{
 			PackageID:     pkgID,
@@ -323,28 +405,5 @@ func (b *amdRAPLBackend) ReadControlRanges() []PackagePowerCapRange {
 }
 
 func (b *amdRAPLBackend) ReadTemperatures() []PackageTemperature {
-	if b == nil || b.client == nil || len(b.socketByPkgID) == 0 {
-		return nil
-	}
-
-	pkgIDs := make([]int, 0, len(b.socketByPkgID))
-	for pkgID := range b.socketByPkgID {
-		pkgIDs = append(pkgIDs, pkgID)
-	}
-	sort.Ints(pkgIDs)
-
-	out := make([]PackageTemperature, 0, len(pkgIDs))
-	for _, pkgID := range pkgIDs {
-		socketID := b.socketByPkgID[pkgID]
-		milliC, err := b.client.SocketTemperature(socketID)
-		if err != nil {
-			continue
-		}
-		out = append(out, PackageTemperature{
-			PackageID:     pkgID,
-			MilliC:        milliC,
-			SampledAtNano: time.Now().UnixNano(),
-		})
-	}
-	return out
+	return nil
 }

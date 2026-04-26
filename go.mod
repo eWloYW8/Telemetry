@@ -4,7 +4,6 @@ go 1.22.0
 
 require (
 	github.com/NVIDIA/go-nvml v0.12.4-1
-	github.com/eWloYW8/esmi-go v0.1.1
 	github.com/go-chi/chi/v5 v5.2.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
