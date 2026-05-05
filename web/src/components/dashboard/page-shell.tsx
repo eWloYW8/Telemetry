@@ -6,6 +6,7 @@ import { Activity, Cpu, Gauge, HardDrive, MemoryStick, Network } from "lucide-re
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import { NodeSidebar } from "./components/node/node-sidebar";
+import { AMDGPUModuleView, amdgpuIndexesFromRegistration } from "./modules/amdgpu/module";
 import { CPUModuleView, cpuPackageIDsFromRegistration } from "./modules/cpu/module";
 import { GPUModuleView, gpuIndexesFromRegistration } from "./modules/gpu/module";
 import { InfiniBandModuleView } from "./modules/infiniband/module";
@@ -66,15 +67,26 @@ export function DashboardShell() {
   const historyByCategory = history[selectedNodeId] ?? {};
 
   const cpuPackageIds = useMemo(() => cpuPackageIDsFromRegistration(registration), [registration]);
-  const gpuIndexes = useMemo(() => gpuIndexesFromRegistration(registration), [registration]);
+
+  type GPUEntry = { vendor: "nvidia" | "amd"; index: number; tabValue: string };
+  const gpuEntries = useMemo<GPUEntry[]>(() => {
+    const entries: GPUEntry[] = [];
+    for (const idx of gpuIndexesFromRegistration(registration)) {
+      entries.push({ vendor: "nvidia", index: idx, tabValue: `gpu:nvidia:${idx}` });
+    }
+    for (const idx of amdgpuIndexesFromRegistration(registration)) {
+      entries.push({ vendor: "amd", index: idx, tabValue: `gpu:amd:${idx}` });
+    }
+    return entries;
+  }, [registration]);
 
   const topTabValues = useMemo(() => {
     const values: string[] = [];
     for (const pkg of cpuPackageIds) values.push(`cpu:${pkg}`);
-    for (const idx of gpuIndexes) values.push(`gpu:${idx}`);
+    for (const entry of gpuEntries) values.push(entry.tabValue);
     values.push("memory", "storage", "network", "infiniband", "process");
     return values;
-  }, [cpuPackageIds, gpuIndexes]);
+  }, [cpuPackageIds, gpuEntries]);
 
   useEffect(() => {
     if (topTabValues.length === 0) {
@@ -161,13 +173,13 @@ export function DashboardShell() {
                             <Cpu className="h-4 w-4" /> CPU {pkg}
                           </TabsTrigger>
                         ))}
-                        {gpuIndexes.map((idx) => (
+                        {gpuEntries.map((entry, seq) => (
                           <TabsTrigger
-                            key={`top-gpu-${idx}`}
-                            value={`gpu:${idx}`}
+                            key={`top-${entry.tabValue}`}
+                            value={entry.tabValue}
                             className={topTabTriggerClass}
                           >
-                            <Gauge className="h-4 w-4" /> GPU {idx}
+                            <Gauge className="h-4 w-4" /> GPU {seq}
                           </TabsTrigger>
                         ))}
                         <TabsTrigger
@@ -220,18 +232,37 @@ export function DashboardShell() {
                   </TabsContent>
                 ))}
 
-                {gpuIndexes.map((idx) => (
-                  <TabsContent key={`gpu-content-${idx}`} value={`gpu:${idx}`} className="space-y-3">
-                    <GPUModuleView
-                      nodeId={selectedNode.nodeId}
-                      gpuIndex={idx}
-                      registration={registration}
-                      latestRaw={latestRaw}
-                      historyByCategory={historyByCategory}
-                      cmdPending={cmdPending}
-                      cmdMsg={cmdMsg}
-                      sendCommand={sendCommand}
-                    />
+                {gpuEntries.map((entry, seq) => (
+                  <TabsContent
+                    key={`content-${entry.tabValue}`}
+                    value={entry.tabValue}
+                    className="space-y-3"
+                  >
+                    {entry.vendor === "nvidia" ? (
+                      <GPUModuleView
+                        nodeId={selectedNode.nodeId}
+                        gpuIndex={entry.index}
+                        displayIndex={seq}
+                        registration={registration}
+                        latestRaw={latestRaw}
+                        historyByCategory={historyByCategory}
+                        cmdPending={cmdPending}
+                        cmdMsg={cmdMsg}
+                        sendCommand={sendCommand}
+                      />
+                    ) : (
+                      <AMDGPUModuleView
+                        nodeId={selectedNode.nodeId}
+                        gpuIndex={entry.index}
+                        displayIndex={seq}
+                        registration={registration}
+                        latestRaw={latestRaw}
+                        historyByCategory={historyByCategory}
+                        cmdPending={cmdPending}
+                        cmdMsg={cmdMsg}
+                        sendCommand={sendCommand}
+                      />
+                    )}
                   </TabsContent>
                 ))}
 

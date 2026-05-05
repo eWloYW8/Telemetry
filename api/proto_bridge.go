@@ -15,6 +15,7 @@ const (
 	categoryCPUUltra   = "cpu_ultra_fast"
 	categoryCPUMedium  = "cpu_medium"
 	categoryGPUFast    = "gpu_fast"
+	categoryAMDGPUFast = "amdgpu_fast"
 	categoryMemory     = "memory"
 	categoryStorage    = "storage"
 	categoryNetwork    = "network"
@@ -23,13 +24,15 @@ const (
 )
 
 const (
-	commandCPUScalingRange = "cpu_scaling_range"
-	commandCPUGovernor     = "cpu_governor"
-	commandCPUUncoreRange  = "cpu_uncore_range"
-	commandCPUPowerCap     = "cpu_power_cap"
-	commandGPUClockRange   = "gpu_clock_range"
-	commandGPUPowerCap     = "gpu_power_cap"
-	commandProcessSignal   = "process_signal"
+	commandCPUScalingRange  = "cpu_scaling_range"
+	commandCPUGovernor      = "cpu_governor"
+	commandCPUUncoreRange   = "cpu_uncore_range"
+	commandCPUPowerCap      = "cpu_power_cap"
+	commandGPUClockRange    = "gpu_clock_range"
+	commandGPUPowerCap      = "gpu_power_cap"
+	commandAMDGPUClockRange = "amdgpu_clock_range"
+	commandAMDGPUPowerCap   = "amdgpu_power_cap"
+	commandProcessSignal    = "process_signal"
 )
 
 func ToPBAgentMessage(msg *AgentMessage) *transportpb.AgentMessage {
@@ -175,6 +178,10 @@ func toPBModuleRegistration(name string, payload any) *transportpb.ModuleRegistr
 		if v, ok := decodeAs[gpupb.ModuleRegistration](payload); ok {
 			return &transportpb.ModuleRegistration{Name: name, Metadata: &transportpb.ModuleRegistration_Gpu{Gpu: v}}
 		}
+	case "amdgpu":
+		if v, ok := decodeAs[gpupb.ModuleRegistration](payload); ok {
+			return &transportpb.ModuleRegistration{Name: name, Metadata: &transportpb.ModuleRegistration_Gpu{Gpu: v}}
+		}
 	case "memory":
 		if v, ok := decodeAs[memorypb.ModuleRegistration](payload); ok {
 			return &transportpb.ModuleRegistration{Name: name, Metadata: &transportpb.ModuleRegistration_Memory{Memory: v}}
@@ -316,6 +323,10 @@ func setPBMetricPayload(out *transportpb.MetricSample, payload any) {
 		if v, ok := decodeAs[gpupb.FastMetrics](payload); ok {
 			out.Payload = &transportpb.MetricSample_GpuFastMetrics{GpuFastMetrics: v}
 		}
+	case categoryAMDGPUFast:
+		if v, ok := decodeAs[gpupb.FastMetrics](payload); ok {
+			out.Payload = &transportpb.MetricSample_GpuFastMetrics{GpuFastMetrics: v}
+		}
 	case categoryMemory:
 		if v, ok := decodeAs[memorypb.Metrics](payload); ok {
 			out.Payload = &transportpb.MetricSample_MemoryMetrics{MemoryMetrics: v}
@@ -392,6 +403,14 @@ func toPBCommand(v *Command) *transportpb.Command {
 			out.Payload = &transportpb.Command_GpuClockRange{GpuClockRange: payload}
 		}
 	case commandGPUPowerCap:
+		if payload, ok := decodeAs[gpupb.PowerCapCommand](v.Payload); ok {
+			out.Payload = &transportpb.Command_GpuPowerCap{GpuPowerCap: payload}
+		}
+	case commandAMDGPUClockRange:
+		if payload, ok := decodeAs[gpupb.ClockRangeCommand](v.Payload); ok {
+			out.Payload = &transportpb.Command_GpuClockRange{GpuClockRange: payload}
+		}
+	case commandAMDGPUPowerCap:
 		if payload, ok := decodeAs[gpupb.PowerCapCommand](v.Payload); ok {
 			out.Payload = &transportpb.Command_GpuPowerCap{GpuPowerCap: payload}
 		}

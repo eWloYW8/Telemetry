@@ -16,6 +16,7 @@ import { Section, StatRow } from "../shared/section";
 type GPUModuleViewProps = {
   nodeId: string;
   gpuIndex: number;
+  displayIndex: number;
   registration: Record<string, any> | null;
   latestRaw: Record<string, Record<string, any>>;
   historyByCategory: Record<string, RawHistorySample[]>;
@@ -37,6 +38,7 @@ export function gpuIndexesFromRegistration(registration: Record<string, any> | n
 export function GPUModuleView({
   nodeId,
   gpuIndex,
+  displayIndex,
   registration,
   latestRaw,
   historyByCategory,
@@ -257,7 +259,7 @@ export function GPUModuleView({
 
   return (
     <>
-      <Section title={`GPU ${gpuIndex} Static`} icon={<Gauge className="h-4 w-4" />}>
+      <Section title={`GPU ${displayIndex} Static`} icon={<Gauge className="h-4 w-4" />}>
         <div className="grid gap-2 md:grid-cols-2">
           <StatRow name="Name" value={strField(activeGPUStatic, "name") || "-"} />
           <StatRow name="UUID" value={strField(activeGPUStatic, "uuid") || "-"} />
@@ -280,7 +282,7 @@ export function GPUModuleView({
         </div>
       </Section>
 
-      <Section title={`GPU ${gpuIndex} Controls`} icon={<Gauge className="h-4 w-4" />}>
+      <Section title={`GPU ${displayIndex} Controls`} icon={<Gauge className="h-4 w-4" />}>
         {gpuCanTuneSM ? (
           <div className="mb-1.5">
             <div className="mb-0.5 text-sm text-[var(--telemetry-muted-fg)]">
@@ -388,7 +390,7 @@ export function GPUModuleView({
       <div className="grid gap-3 lg:grid-cols-2">
         <MetricChart
           chartId={`gpu-utilization-${gpuChartSuffix}`}
-          title={`GPU ${gpuIndex} Utilization`}
+          title={`GPU ${displayIndex} Utilization`}
           yLabel="%"
           data={gpuUtilSeries}
           lines={[
@@ -401,7 +403,7 @@ export function GPUModuleView({
         />
         <MetricChart
           chartId={`gpu-power-${gpuChartSuffix}`}
-          title={`GPU ${gpuIndex} Power`}
+          title={`GPU ${displayIndex} Power`}
           yLabel="W"
           data={gpuPowerSeries}
           lines={[{ key: "powerW", label: "Power", color: "#0e7490" }]}
@@ -411,7 +413,7 @@ export function GPUModuleView({
         />
         <MetricChart
           chartId={`gpu-clock-${gpuChartSuffix}`}
-          title={`GPU ${gpuIndex} Clock`}
+          title={`GPU ${displayIndex} Clock`}
           yLabel="MHz"
           data={gpuClockSeries}
           lines={[
@@ -433,7 +435,7 @@ export function GPUModuleView({
         />
         <MetricChart
           chartId={`gpu-memory-usage-${gpuChartSuffix}`}
-          title={`GPU ${gpuIndex} Memory Usage`}
+          title={`GPU ${displayIndex} Memory Usage`}
           yLabel="GB"
           data={gpuMemorySeries}
           lines={[{ key: "usedGB", label: "Used", color: "#9333ea" }]}

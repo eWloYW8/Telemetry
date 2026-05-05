@@ -11,6 +11,7 @@ import { deltaRate, maxOr } from "../../utils/rates";
 import { nsToTimeLabel } from "../../utils/time";
 import { clamp, formatKHz, formatNumber, formatPowerMicroW, formatPowerMilliW } from "../../utils/units";
 import type { HistoryMap } from "../../state/metric-history";
+import { amdgpuIndexesFromRegistration } from "../amdgpu/module";
 import { cpuPackageIDsFromRegistration } from "../cpu/module";
 import { gpuIndexesFromRegistration } from "../gpu/module";
 import { linePalette, moduleMeta, numField, sampledAtNs, strField } from "../shared/data";
@@ -57,9 +58,12 @@ type CpuControlDevice = {
   supportsDramPowerCap: boolean;
 };
 
+type GpuVendor = "nvidia" | "amd";
+
 type GpuControlDevice = {
   id: string;
   nodeId: string;
+  vendor: GpuVendor;
   label: string;
   gpuIndex: number;
   smMinBound: number;
@@ -119,8 +123,16 @@ function cpuLineKey(nodeID: string, packageID: number): string {
   return `cpu_${nodeID}_${packageID}`.replace(/[^a-zA-Z0-9_]/g, "_");
 }
 
-function gpuLineKey(nodeID: string, gpuIndex: number): string {
-  return `gpu_${nodeID}_${gpuIndex}`.replace(/[^a-zA-Z0-9_]/g, "_");
+function gpuLineKey(nodeID: string, vendor: GpuVendor, gpuIndex: number): string {
+  return `gpu_${nodeID}_${vendor}_${gpuIndex}`.replace(/[^a-zA-Z0-9_]/g, "_");
+}
+
+function gpuClockCommandType(vendor: GpuVendor): string {
+  return vendor === "amd" ? "amdgpu_clock_range" : "gpu_clock_range";
+}
+
+function gpuPowerCapCommandType(vendor: GpuVendor): string {
+  return vendor === "amd" ? "amdgpu_power_cap" : "gpu_power_cap";
 }
 
 function nodeDeviceName(node: NodeRuntime): string {
@@ -210,22 +222,26 @@ function buildGPUFrequencySeries(nodes: NodeRuntime[], history: HistoryMap): Cha
   const lines: ChartLineDef[] = [];
   let maxY = 1;
 
-  for (const node of nodes) {
+  const populate = (node: NodeRuntime, vendor: GpuVendor, category: "gpu_fast" | "amdgpu_fast", baseSeq: number) => {
     const labelPrefix = nodeDeviceName(node);
-    const gpuIndexes = gpuIndexesFromRegistration((node.registration ?? null) as Record<string, any> | null);
-    for (const gpuIndex of gpuIndexes) {
-      ensureLine(lines, gpuLineKey(node.nodeId, gpuIndex), `${labelPrefix} GPU ${gpuIndex}`);
-    }
+    const reg = (node.registration ?? null) as Record<string, any> | null;
+    const gpuIndexes =
+      vendor === "nvidia" ? gpuIndexesFromRegistration(reg) : amdgpuIndexesFromRegistration(reg);
+    gpuIndexes.forEach((gpuIndex, offset) => {
+      ensureLine(lines, gpuLineKey(node.nodeId, vendor, gpuIndex), `${labelPrefix} GPU ${baseSeq + offset}`);
+    });
 
-    const samples = history[node.nodeId]?.gpu_fast ?? [];
+    const samples = history[node.nodeId]?.[category] ?? [];
     for (const item of samples) {
       const payload = item.sample.gpuFastMetrics ?? item.sample.gpu_fast_metrics ?? {};
       const devices = (payload.devices ?? []) as Array<Record<string, any>>;
       for (const dev of devices) {
         const gpuIndex = numField(dev, "index");
         if (gpuIndex < 0) continue;
-        const key = gpuLineKey(node.nodeId, gpuIndex);
-        const label = `${labelPrefix} GPU ${gpuIndex}`;
+        const seq = baseSeq + gpuIndexes.indexOf(gpuIndex);
+        const displaySeq = seq < baseSeq ? baseSeq + gpuIndex : seq;
+        const key = gpuLineKey(node.nodeId, vendor, gpuIndex);
+        const label = `${labelPrefix} GPU ${displaySeq}`;
         ensureLine(lines, key, label);
         const freqMHz = numField(dev, "graphicsClockMhz", "graphics_clock_mhz");
         const row = ensureRow(rowsByTs, item.atNs);
@@ -233,6 +249,12 @@ function buildGPUFrequencySeries(nodes: NodeRuntime[], history: HistoryMap): Cha
         if (freqMHz > maxY) maxY = freqMHz;
       }
     }
+    return gpuIndexes.length;
+  };
+
+  for (const node of nodes) {
+    const nvidiaCount = populate(node, "nvidia", "gpu_fast", 0);
+    populate(node, "amd", "amdgpu_fast", nvidiaCount);
   }
 
   return { data: toRows(rowsByTs), lines, maxY };
@@ -331,22 +353,26 @@ function buildGPUPowerSeries(nodes: NodeRuntime[], history: HistoryMap): ChartBu
   const lines: ChartLineDef[] = [];
   let maxY = 1;
 
-  for (const node of nodes) {
+  const populate = (node: NodeRuntime, vendor: GpuVendor, category: "gpu_fast" | "amdgpu_fast", baseSeq: number) => {
     const labelPrefix = nodeDeviceName(node);
-    const gpuIndexes = gpuIndexesFromRegistration((node.registration ?? null) as Record<string, any> | null);
-    for (const gpuIndex of gpuIndexes) {
-      ensureLine(lines, gpuLineKey(node.nodeId, gpuIndex), `${labelPrefix} GPU ${gpuIndex}`);
-    }
+    const reg = (node.registration ?? null) as Record<string, any> | null;
+    const gpuIndexes =
+      vendor === "nvidia" ? gpuIndexesFromRegistration(reg) : amdgpuIndexesFromRegistration(reg);
+    gpuIndexes.forEach((gpuIndex, offset) => {
+      ensureLine(lines, gpuLineKey(node.nodeId, vendor, gpuIndex), `${labelPrefix} GPU ${baseSeq + offset}`);
+    });
 
-    const samples = history[node.nodeId]?.gpu_fast ?? [];
+    const samples = history[node.nodeId]?.[category] ?? [];
     for (const item of samples) {
       const payload = item.sample.gpuFastMetrics ?? item.sample.gpu_fast_metrics ?? {};
       const devices = (payload.devices ?? []) as Array<Record<string, any>>;
       for (const dev of devices) {
         const gpuIndex = numField(dev, "index");
         if (gpuIndex < 0) continue;
-        const key = gpuLineKey(node.nodeId, gpuIndex);
-        const label = `${labelPrefix} GPU ${gpuIndex}`;
+        const seqOffset = gpuIndexes.indexOf(gpuIndex);
+        const displaySeq = seqOffset >= 0 ? baseSeq + seqOffset : baseSeq + gpuIndex;
+        const key = gpuLineKey(node.nodeId, vendor, gpuIndex);
+        const label = `${labelPrefix} GPU ${displaySeq}`;
         ensureLine(lines, key, label);
         const powerW = numField(dev, "powerUsageMilliwatt", "power_usage_milliwatt") / 1000;
         const row = ensureRow(rowsByTs, item.atNs);
@@ -354,6 +380,12 @@ function buildGPUPowerSeries(nodes: NodeRuntime[], history: HistoryMap): ChartBu
         if (powerW > maxY) maxY = powerW;
       }
     }
+    return gpuIndexes.length;
+  };
+
+  for (const node of nodes) {
+    const nvidiaCount = populate(node, "nvidia", "gpu_fast", 0);
+    populate(node, "amd", "amdgpu_fast", nvidiaCount);
   }
 
   return { data: toRows(rowsByTs), lines, maxY };
@@ -623,29 +655,39 @@ function collectCPUControlDevices(nodes: NodeRuntime[], history: HistoryMap): Cp
 function collectGPUControlDevices(nodes: NodeRuntime[]): GpuControlDevice[] {
   const devices: GpuControlDevice[] = [];
 
-  for (const node of nodes) {
+  const appendVendor = (
+    node: NodeRuntime,
+    vendor: GpuVendor,
+    moduleName: "gpu" | "amdgpu",
+    category: "gpu_fast" | "amdgpu_fast",
+    baseSeq: number,
+  ): number => {
     const labelPrefix = nodeDeviceName(node);
-    const gpuMeta = moduleMeta((node.registration ?? null) as Record<string, any> | null, "gpu");
-    const gpuStatic = ((gpuMeta?.static ?? []) as Array<Record<string, any>>)
+    const meta = moduleMeta((node.registration ?? null) as Record<string, any> | null, moduleName);
+    const staticList = ((meta?.static ?? []) as Array<Record<string, any>>)
       .slice()
       .sort((a, b) => numField(a, "index") - numField(b, "index"));
 
-    const gpuFastRaw = node.latestRaw.gpu_fast?.gpuFastMetrics ?? node.latestRaw.gpu_fast?.gpu_fast_metrics ?? null;
-    const gpuFastDevices = ((gpuFastRaw?.devices ?? []) as Array<Record<string, any>>)
+    const fastRaw = node.latestRaw[category]?.gpuFastMetrics ?? node.latestRaw[category]?.gpu_fast_metrics ?? null;
+    const fastDevices = ((fastRaw?.devices ?? []) as Array<Record<string, any>>)
       .slice()
       .sort((a, b) => numField(a, "index") - numField(b, "index"));
 
-    const gpuIndexSet = new Set<number>(gpuIndexesFromRegistration((node.registration ?? null) as Record<string, any> | null));
-    for (const dev of gpuFastDevices) {
+    const registeredIndexes =
+      vendor === "nvidia"
+        ? gpuIndexesFromRegistration((node.registration ?? null) as Record<string, any> | null)
+        : amdgpuIndexesFromRegistration((node.registration ?? null) as Record<string, any> | null);
+    const indexSet = new Set<number>(registeredIndexes);
+    for (const dev of fastDevices) {
       const idx = numField(dev, "index");
-      if (idx >= 0) gpuIndexSet.add(idx);
+      if (idx >= 0) indexSet.add(idx);
     }
 
-    const gpuIndexes = Array.from(gpuIndexSet).sort((a, b) => a - b);
+    const sortedIndexes = Array.from(indexSet).sort((a, b) => a - b);
 
-    for (const gpuIndex of gpuIndexes) {
-      const staticDev = gpuStatic.find((g) => numField(g, "index") === gpuIndex) ?? null;
-      const fastDev = gpuFastDevices.find((g) => numField(g, "index") === gpuIndex) ?? null;
+    sortedIndexes.forEach((gpuIndex, offset) => {
+      const staticDev = staticList.find((g) => numField(g, "index") === gpuIndex) ?? null;
+      const fastDev = fastDevices.find((g) => numField(g, "index") === gpuIndex) ?? null;
 
       const smMinBound = maxOr(numField(staticDev, "smClockMinMhz", "sm_clock_min_mhz"), 1);
       const smMaxBound = maxOr(numField(staticDev, "smClockMaxMhz", "sm_clock_max_mhz"), smMinBound);
@@ -691,9 +733,10 @@ function collectGPUControlDevices(nodes: NodeRuntime[]): GpuControlDevice[] {
       );
 
       devices.push({
-        id: `${node.nodeId}::gpu::${gpuIndex}`,
+        id: `${node.nodeId}::${vendor}::${gpuIndex}`,
         nodeId: node.nodeId,
-        label: `${labelPrefix} GPU ${gpuIndex}`,
+        vendor,
+        label: `${labelPrefix} GPU ${baseSeq + offset}`,
         gpuIndex,
         smMinBound,
         smMaxBound,
@@ -712,7 +755,13 @@ function collectGPUControlDevices(nodes: NodeRuntime[]): GpuControlDevice[] {
         powerCurrentCapMilliW,
         powerCurrentUsageMilliW: numField(fastDev, "powerUsageMilliwatt", "power_usage_milliwatt"),
       });
-    }
+    });
+    return sortedIndexes.length;
+  };
+
+  for (const node of nodes) {
+    const nvidiaCount = appendVendor(node, "nvidia", "gpu", "gpu_fast", 0);
+    appendVendor(node, "amd", "amdgpu", "amdgpu_fast", nvidiaCount);
   }
 
   return devices;
@@ -1414,7 +1463,7 @@ function GpuClockRangeControlItem({
   }, [device.canTuneMem, selected, forcedMemRange, device.memMinBound, device.memMaxBound]);
 
   const control = useThrottledEmitter<{ sm: [number, number]; mem: [number, number] }>((range) => {
-    dispatchControlCommand(sendCommand, device.nodeId, "gpu_clock_range", {
+    dispatchControlCommand(sendCommand, device.nodeId, gpuClockCommandType(device.vendor), {
       gpuIndex: device.gpuIndex,
       smMinMhz: device.canTuneSM ? Math.round(range.sm[0]) : 0,
       smMaxMhz: device.canTuneSM ? Math.round(range.sm[1]) : 0,
@@ -1556,7 +1605,7 @@ function GpuPowerCapControlItem({
   }, [selected, forcedValue, device.powerMinMilliW, device.powerMaxMilliW]);
 
   const control = useThrottledEmitter<number>((value) => {
-    dispatchControlCommand(sendCommand, device.nodeId, "gpu_power_cap", {
+    dispatchControlCommand(sendCommand, device.nodeId, gpuPowerCapCommandType(device.vendor), {
       gpuIndex: device.gpuIndex,
       milliwatt: Math.round(clamp(value, device.powerMinMilliW, device.powerMaxMilliW)),
     });
@@ -2272,7 +2321,7 @@ export function PowerModuleView({ nodes, history, sendCommand }: PowerModuleView
                       const memMax = device.canTuneMem
                         ? clamp(Math.max(device.memCurrentMin, device.memCurrentMax), device.memMinBound, device.memMaxBound)
                         : 0;
-                      dispatchControlCommand(sendCommand, device.nodeId, "gpu_clock_range", {
+                      dispatchControlCommand(sendCommand, device.nodeId, gpuClockCommandType(device.vendor), {
                         gpuIndex: device.gpuIndex,
                         smMinMhz: Math.min(smMinMhz, smMaxMhz),
                         smMaxMhz: Math.max(smMinMhz, smMaxMhz),
@@ -2307,7 +2356,7 @@ export function PowerModuleView({ nodes, history, sendCommand }: PowerModuleView
                       const smMax = device.canTuneSM
                         ? clamp(Math.max(device.smCurrentMin, device.smCurrentMax), device.smMinBound, device.smMaxBound)
                         : 0;
-                      dispatchControlCommand(sendCommand, device.nodeId, "gpu_clock_range", {
+                      dispatchControlCommand(sendCommand, device.nodeId, gpuClockCommandType(device.vendor), {
                         gpuIndex: device.gpuIndex,
                         smMinMhz: device.canTuneSM ? Math.round(smMin) : 0,
                         smMaxMhz: device.canTuneSM ? Math.round(smMax) : 0,
@@ -2366,7 +2415,7 @@ export function PowerModuleView({ nodes, history, sendCommand }: PowerModuleView
                   onValueChange={(value) => setGpuPowerBatchValue(value)}
                   onApply={(value) => {
                     for (const device of gpuPowerSelectedDevices) {
-                      dispatchControlCommand(sendCommand, device.nodeId, "gpu_power_cap", {
+                      dispatchControlCommand(sendCommand, device.nodeId, gpuPowerCapCommandType(device.vendor), {
                         gpuIndex: device.gpuIndex,
                         milliwatt: Math.round(clamp(value, device.powerMinMilliW, device.powerMaxMilliW)),
                       });

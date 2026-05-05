@@ -32,6 +32,7 @@ export const wsCategories = [
   "cpu_ultra_fast",
   "cpu_medium",
   "gpu_fast",
+  "amdgpu_fast",
   "memory",
   "storage",
   "network",

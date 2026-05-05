@@ -17,6 +17,7 @@ import (
 	"github.com/eWloYW8/Telemetry/agent/collectors"
 	control "github.com/eWloYW8/Telemetry/agent/executor"
 	"github.com/eWloYW8/Telemetry/agent/modules"
+	amdgpuModule "github.com/eWloYW8/Telemetry/agent/modules/amdgpu"
 	cpuModule "github.com/eWloYW8/Telemetry/agent/modules/cpu"
 	gpuModule "github.com/eWloYW8/Telemetry/agent/modules/gpu"
 	infinibandModule "github.com/eWloYW8/Telemetry/agent/modules/infiniband"
@@ -69,10 +70,15 @@ func New(cfg config.AgentConfig, logger zerolog.Logger) (*Agent, error) {
 	if gpuErr != nil {
 		logger.Warn().Err(gpuErr).Msg("gpu collector init failed, continue without GPU")
 	}
+	amdgpuMod, amdgpuErr := amdgpuModule.New(cfg.Report)
+	if amdgpuErr != nil {
+		logger.Warn().Err(amdgpuErr).Msg("amdgpu collector init failed, continue without AMD GPU")
+	}
 
 	moduleRegistry, err := modules.NewRegistry(
 		cpuMod,
 		gpuMod,
+		amdgpuMod,
 		memoryModule.New(cfg.Report),
 		storageModule.New(cfg.Report),
 		networkModule.New(cfg.Report),

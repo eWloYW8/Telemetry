@@ -50,6 +50,16 @@ export function buildProtoCommand(
         ...base,
         gpuPowerCap: telemetryProto.module.gpu.v1.PowerCapCommand.create(payload),
       });
+    case "amdgpu_clock_range":
+      return telemetryProto.v1.Command.create({
+        ...base,
+        gpuClockRange: telemetryProto.module.gpu.v1.ClockRangeCommand.create(payload),
+      });
+    case "amdgpu_power_cap":
+      return telemetryProto.v1.Command.create({
+        ...base,
+        gpuPowerCap: telemetryProto.module.gpu.v1.PowerCapCommand.create(payload),
+      });
     case "process_signal":
       return telemetryProto.v1.Command.create({
         ...base,
