@@ -30,7 +30,7 @@ type ChartBuildResult = {
   maxY: number;
 };
 
-type CpuControlDevice = {
+export type CpuControlDevice = {
   id: string;
   nodeId: string;
   label: string;
@@ -58,9 +58,9 @@ type CpuControlDevice = {
   supportsDramPowerCap: boolean;
 };
 
-type GpuVendor = "nvidia" | "amd";
+export type GpuVendor = "nvidia" | "amd";
 
-type GpuControlDevice = {
+export type GpuControlDevice = {
   id: string;
   nodeId: string;
   vendor: GpuVendor;
@@ -135,7 +135,7 @@ function gpuPowerCapCommandType(vendor: GpuVendor): string {
   return vendor === "amd" ? "amdgpu_power_cap" : "gpu_power_cap";
 }
 
-function nodeDeviceName(node: NodeRuntime): string {
+export function nodeDeviceName(node: NodeRuntime): string {
   const basic = (node.registration?.basic ?? null) as Record<string, any> | null;
   return strField(basic, "hostname") || node.nodeId;
 }
@@ -490,7 +490,7 @@ function latestCpuPowerUsageByPackage(samples: Array<{ atNs: bigint; sample: Rec
   return result;
 }
 
-function collectCPUControlDevices(nodes: NodeRuntime[], history: HistoryMap): CpuControlDevice[] {
+export function collectCPUControlDevices(nodes: NodeRuntime[], history: HistoryMap): CpuControlDevice[] {
   const devices: CpuControlDevice[] = [];
 
   for (const node of nodes) {
@@ -652,7 +652,7 @@ function collectCPUControlDevices(nodes: NodeRuntime[], history: HistoryMap): Cp
   return devices;
 }
 
-function collectGPUControlDevices(nodes: NodeRuntime[]): GpuControlDevice[] {
+export function collectGPUControlDevices(nodes: NodeRuntime[]): GpuControlDevice[] {
   const devices: GpuControlDevice[] = [];
 
   const appendVendor = (
@@ -784,7 +784,7 @@ function dispatchControlCommand(
     });
 }
 
-type SelectionOption = {
+export type SelectionOption = {
   id: string;
   label: string;
   scopeKey: string;
@@ -1066,7 +1066,7 @@ function BatchRangeControlSlider({
   );
 }
 
-function CpuCoreRangeControlItem({
+export function CpuCoreRangeControlItem({
   device,
   sendCommand,
   option,
@@ -1075,6 +1075,8 @@ function CpuCoreRangeControlItem({
   selectionDisabled,
   onToggleSelection,
   showControls,
+  hideSelection = false,
+  hideLabel = false,
 }: {
   device: CpuControlDevice;
   sendCommand: PowerModuleViewProps["sendCommand"];
@@ -1084,6 +1086,8 @@ function CpuCoreRangeControlItem({
   selectionDisabled: boolean;
   onToggleSelection: (checked: boolean) => void;
   showControls: boolean;
+  hideSelection?: boolean;
+  hideLabel?: boolean;
 }) {
   const [range, setRange] = useState<[number, number]>([device.scalingCurrentMin, device.scalingCurrentMax]);
   const [isEditing, setIsEditing] = useState(false);
@@ -1123,18 +1127,22 @@ function CpuCoreRangeControlItem({
 
   return (
     <div className="space-y-1.5">
-      <label
-        className={`mb-1 inline-flex items-center gap-2 text-sm font-medium ${selectionDisabled ? "text-[var(--telemetry-muted-fg)] opacity-70" : "text-[var(--telemetry-text)]"}`}
-      >
-        <input
-          type="checkbox"
-          className="h-4 w-4 accent-[var(--telemetry-accent)]"
-          checked={selected}
-          disabled={selectionDisabled}
-          onChange={(ev) => onToggleSelection(ev.target.checked)}
-        />
-        <span>{option.label}</span>
-      </label>
+      {hideLabel ? null : hideSelection ? (
+        <div className="mb-1 text-sm font-medium text-[var(--telemetry-text)]">{option.label}</div>
+      ) : (
+        <label
+          className={`mb-1 inline-flex items-center gap-2 text-sm font-medium ${selectionDisabled ? "text-[var(--telemetry-muted-fg)] opacity-70" : "text-[var(--telemetry-text)]"}`}
+        >
+          <input
+            type="checkbox"
+            className="h-4 w-4 accent-[var(--telemetry-accent)]"
+            checked={selected}
+            disabled={selectionDisabled}
+            onChange={(ev) => onToggleSelection(ev.target.checked)}
+          />
+          <span>{option.label}</span>
+        </label>
+      )}
       {showControls ? (
         <RichControlSlider
           min={device.scalingMinBound}
@@ -1173,7 +1181,7 @@ function CpuCoreRangeControlItem({
   );
 }
 
-function CpuUncoreRangeControlItem({
+export function CpuUncoreRangeControlItem({
   device,
   sendCommand,
   option,
@@ -1182,6 +1190,8 @@ function CpuUncoreRangeControlItem({
   selectionDisabled,
   onToggleSelection,
   showControls,
+  hideSelection = false,
+  hideLabel = false,
 }: {
   device: CpuControlDevice;
   sendCommand: PowerModuleViewProps["sendCommand"];
@@ -1191,6 +1201,8 @@ function CpuUncoreRangeControlItem({
   selectionDisabled: boolean;
   onToggleSelection: (checked: boolean) => void;
   showControls: boolean;
+  hideSelection?: boolean;
+  hideLabel?: boolean;
 }) {
   const [range, setRange] = useState<[number, number]>([device.uncoreCurrentMin, device.uncoreCurrentMax]);
   const [isEditing, setIsEditing] = useState(false);
@@ -1234,18 +1246,22 @@ function CpuUncoreRangeControlItem({
 
   return (
     <div className="space-y-1.5">
-      <label
-        className={`mb-1 inline-flex items-center gap-2 text-sm font-medium ${selectionDisabled ? "text-[var(--telemetry-muted-fg)] opacity-70" : "text-[var(--telemetry-text)]"}`}
-      >
-        <input
-          type="checkbox"
-          className="h-4 w-4 accent-[var(--telemetry-accent)]"
-          checked={selected}
-          disabled={selectionDisabled}
-          onChange={(ev) => onToggleSelection(ev.target.checked)}
-        />
-        <span>{option.label}</span>
-      </label>
+      {hideLabel ? null : hideSelection ? (
+        <div className="mb-1 text-sm font-medium text-[var(--telemetry-text)]">{option.label}</div>
+      ) : (
+        <label
+          className={`mb-1 inline-flex items-center gap-2 text-sm font-medium ${selectionDisabled ? "text-[var(--telemetry-muted-fg)] opacity-70" : "text-[var(--telemetry-text)]"}`}
+        >
+          <input
+            type="checkbox"
+            className="h-4 w-4 accent-[var(--telemetry-accent)]"
+            checked={selected}
+            disabled={selectionDisabled}
+            onChange={(ev) => onToggleSelection(ev.target.checked)}
+          />
+          <span>{option.label}</span>
+        </label>
+      )}
       {showControls ? (
         <RichControlSlider
           min={device.uncoreMinBound}
@@ -1284,7 +1300,7 @@ function CpuUncoreRangeControlItem({
   );
 }
 
-function CpuPowerCapControlItem({
+export function CpuPowerCapControlItem({
   device,
   domain,
   sendCommand,
@@ -1294,6 +1310,8 @@ function CpuPowerCapControlItem({
   selectionDisabled,
   onToggleSelection,
   showControls,
+  hideSelection = false,
+  hideLabel = false,
 }: {
   device: CpuControlDevice;
   domain: "package" | "dram";
@@ -1304,6 +1322,8 @@ function CpuPowerCapControlItem({
   selectionDisabled: boolean;
   onToggleSelection: (checked: boolean) => void;
   showControls: boolean;
+  hideSelection?: boolean;
+  hideLabel?: boolean;
 }) {
   const minBound = domain === "package" ? device.packagePowerMinMicroW : device.dramPowerMinMicroW;
   const maxBound = domain === "package" ? device.packagePowerMaxMicroW : device.dramPowerMaxMicroW;
@@ -1343,18 +1363,22 @@ function CpuPowerCapControlItem({
 
   return (
     <div className="space-y-1.5">
-      <label
-        className={`mb-1 inline-flex items-center gap-2 text-sm font-medium ${selectionDisabled ? "text-[var(--telemetry-muted-fg)] opacity-70" : "text-[var(--telemetry-text)]"}`}
-      >
-        <input
-          type="checkbox"
-          className="h-4 w-4 accent-[var(--telemetry-accent)]"
-          checked={selected}
-          disabled={selectionDisabled}
-          onChange={(ev) => onToggleSelection(ev.target.checked)}
-        />
-        <span>{option.label}</span>
-      </label>
+      {hideLabel ? null : hideSelection ? (
+        <div className="mb-1 text-sm font-medium text-[var(--telemetry-text)]">{option.label}</div>
+      ) : (
+        <label
+          className={`mb-1 inline-flex items-center gap-2 text-sm font-medium ${selectionDisabled ? "text-[var(--telemetry-muted-fg)] opacity-70" : "text-[var(--telemetry-text)]"}`}
+        >
+          <input
+            type="checkbox"
+            className="h-4 w-4 accent-[var(--telemetry-accent)]"
+            checked={selected}
+            disabled={selectionDisabled}
+            onChange={(ev) => onToggleSelection(ev.target.checked)}
+          />
+          <span>{option.label}</span>
+        </label>
+      )}
       {showControls ? (
         <RichControlSlider
           min={minBound}
@@ -1384,7 +1408,7 @@ function CpuPowerCapControlItem({
   );
 }
 
-function GpuClockRangeControlItem({
+export function GpuClockRangeControlItem({
   device,
   sendCommand,
   option,
@@ -1394,6 +1418,9 @@ function GpuClockRangeControlItem({
   selectionDisabled,
   onToggleSelection,
   showControls,
+  hideSelection = false,
+  hideLabel = false,
+  hideMemoryClock = false,
 }: {
   device: GpuControlDevice;
   sendCommand: PowerModuleViewProps["sendCommand"];
@@ -1404,6 +1431,9 @@ function GpuClockRangeControlItem({
   selectionDisabled: boolean;
   onToggleSelection: (checked: boolean) => void;
   showControls: boolean;
+  hideSelection?: boolean;
+  hideLabel?: boolean;
+  hideMemoryClock?: boolean;
 }) {
   const [smRange, setSmRange] = useState<[number, number]>([device.smCurrentMin, device.smCurrentMax]);
   const [memRange, setMemRange] = useState<[number, number]>([device.memCurrentMin, device.memCurrentMax]);
@@ -1476,18 +1506,22 @@ function GpuClockRangeControlItem({
 
   return (
     <div className="space-y-1.5">
-      <label
-        className={`mb-1 inline-flex items-center gap-2 text-sm font-medium ${selectionDisabled ? "text-[var(--telemetry-muted-fg)] opacity-70" : "text-[var(--telemetry-text)]"}`}
-      >
-        <input
-          type="checkbox"
-          className="h-4 w-4 accent-[var(--telemetry-accent)]"
-          checked={selected}
-          disabled={selectionDisabled}
-          onChange={(ev) => onToggleSelection(ev.target.checked)}
-        />
-        <span>{option.label}</span>
-      </label>
+      {hideLabel ? null : hideSelection ? (
+        <div className="mb-1 text-sm font-medium text-[var(--telemetry-text)]">{option.label}</div>
+      ) : (
+        <label
+          className={`mb-1 inline-flex items-center gap-2 text-sm font-medium ${selectionDisabled ? "text-[var(--telemetry-muted-fg)] opacity-70" : "text-[var(--telemetry-text)]"}`}
+        >
+          <input
+            type="checkbox"
+            className="h-4 w-4 accent-[var(--telemetry-accent)]"
+            checked={selected}
+            disabled={selectionDisabled}
+            onChange={(ev) => onToggleSelection(ev.target.checked)}
+          />
+          <span>{option.label}</span>
+        </label>
+      )}
 
       {showControls && device.canTuneSM ? (
         <div className="mb-1.5">
@@ -1525,7 +1559,7 @@ function GpuClockRangeControlItem({
         </div>
       ) : null}
 
-      {showControls && device.canTuneMem ? (
+      {showControls && device.canTuneMem && !hideMemoryClock ? (
         <div>
           <div className="mb-0.5 text-sm text-[var(--telemetry-muted-fg)]">
             Memory Clock {formatNumber(memRange[0])} ~ {formatNumber(memRange[1])} MHz
@@ -1567,7 +1601,7 @@ function GpuClockRangeControlItem({
   );
 }
 
-function GpuPowerCapControlItem({
+export function GpuPowerCapControlItem({
   device,
   sendCommand,
   option,
@@ -1576,6 +1610,8 @@ function GpuPowerCapControlItem({
   selectionDisabled,
   onToggleSelection,
   showControls,
+  hideSelection = false,
+  hideLabel = false,
 }: {
   device: GpuControlDevice;
   sendCommand: PowerModuleViewProps["sendCommand"];
@@ -1585,6 +1621,8 @@ function GpuPowerCapControlItem({
   selectionDisabled: boolean;
   onToggleSelection: (checked: boolean) => void;
   showControls: boolean;
+  hideSelection?: boolean;
+  hideLabel?: boolean;
 }) {
   const [cap, setCap] = useState(device.powerCurrentCapMilliW);
   const [isEditing, setIsEditing] = useState(false);
@@ -1613,18 +1651,22 @@ function GpuPowerCapControlItem({
 
   return (
     <div className="space-y-1.5">
-      <label
-        className={`mb-1 inline-flex items-center gap-2 text-sm font-medium ${selectionDisabled ? "text-[var(--telemetry-muted-fg)] opacity-70" : "text-[var(--telemetry-text)]"}`}
-      >
-        <input
-          type="checkbox"
-          className="h-4 w-4 accent-[var(--telemetry-accent)]"
-          checked={selected}
-          disabled={selectionDisabled}
-          onChange={(ev) => onToggleSelection(ev.target.checked)}
-        />
-        <span>{option.label}</span>
-      </label>
+      {hideLabel ? null : hideSelection ? (
+        <div className="mb-1 text-sm font-medium text-[var(--telemetry-text)]">{option.label}</div>
+      ) : (
+        <label
+          className={`mb-1 inline-flex items-center gap-2 text-sm font-medium ${selectionDisabled ? "text-[var(--telemetry-muted-fg)] opacity-70" : "text-[var(--telemetry-text)]"}`}
+        >
+          <input
+            type="checkbox"
+            className="h-4 w-4 accent-[var(--telemetry-accent)]"
+            checked={selected}
+            disabled={selectionDisabled}
+            onChange={(ev) => onToggleSelection(ev.target.checked)}
+          />
+          <span>{option.label}</span>
+        </label>
+      )}
       {showControls ? (
         <RichControlSlider
           min={device.powerMinMilliW}

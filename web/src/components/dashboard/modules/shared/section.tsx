@@ -12,7 +12,7 @@ export function Section({
   compact = false,
   children,
 }: {
-  title: string;
+  title: ReactNode;
   description?: ReactNode;
   icon?: ReactNode;
   right?: ReactNode;
@@ -22,8 +22,8 @@ export function Section({
   return (
     <section className="telemetry-panel overflow-hidden">
       <header className="telemetry-panel-header flex items-start justify-between gap-3">
-        <div>
-          <div className="telemetry-title inline-flex items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="telemetry-title flex items-center gap-2">
             {icon}
             {title}
           </div>

@@ -12,6 +12,7 @@ import { GPUModuleView, gpuIndexesFromRegistration } from "./modules/gpu/module"
 import { InfiniBandModuleView } from "./modules/infiniband/module";
 import { MemoryModuleView } from "./modules/memory/module";
 import { NetworkModuleView } from "./modules/network/module";
+import { NodesModuleView } from "./modules/nodes/module";
 import { PowerModuleView } from "./modules/power/module";
 import { ProcessModuleView } from "./modules/process/module";
 import { SettingsModuleView } from "./modules/settings/module";
@@ -20,6 +21,7 @@ import { useTelemetryWS } from "./state/ws-client";
 import type { TabKey } from "./types";
 
 const powerViewID = "__power__";
+const nodesViewID = "__nodes__";
 const settingsViewID = "__settings__";
 
 export function DashboardShell() {
@@ -44,22 +46,36 @@ export function DashboardShell() {
 
   useEffect(() => {
     if (nodes.length === 0) {
-      if (selectedNodeId && selectedNodeId !== settingsViewID && selectedNodeId !== powerViewID) {
+      if (
+        selectedNodeId &&
+        selectedNodeId !== settingsViewID &&
+        selectedNodeId !== powerViewID &&
+        selectedNodeId !== nodesViewID
+      ) {
         setSelectedNodeId("");
       }
       return;
     }
-    if (selectedNodeId === settingsViewID || selectedNodeId === powerViewID) return;
+    if (
+      selectedNodeId === settingsViewID ||
+      selectedNodeId === powerViewID ||
+      selectedNodeId === nodesViewID
+    )
+      return;
     if (!selectedNodeId || !nodes.some((n) => n.nodeId === selectedNodeId)) {
       setSelectedNodeId(nodes[0].nodeId);
     }
   }, [nodes, selectedNodeId]);
 
   const powerSelected = selectedNodeId === powerViewID;
+  const nodesSelected = selectedNodeId === nodesViewID;
   const settingsSelected = selectedNodeId === settingsViewID;
   const selectedNode = useMemo(
-    () => (settingsSelected || powerSelected ? null : nodes.find((n) => n.nodeId === selectedNodeId) ?? null),
-    [nodes, selectedNodeId, settingsSelected, powerSelected],
+    () =>
+      settingsSelected || powerSelected || nodesSelected
+        ? null
+        : nodes.find((n) => n.nodeId === selectedNodeId) ?? null,
+    [nodes, selectedNodeId, settingsSelected, powerSelected, nodesSelected],
   );
 
   const registration = (selectedNode?.registration ?? null) as Record<string, any> | null;
@@ -132,6 +148,8 @@ export function DashboardShell() {
           onSelectNode={setSelectedNodeId}
           powerSelected={powerSelected}
           onSelectPower={() => setSelectedNodeId(powerViewID)}
+          nodesSelected={nodesSelected}
+          onSelectNodes={() => setSelectedNodeId(nodesViewID)}
           settingsSelected={settingsSelected}
           onSelectSettings={() => setSelectedNodeId(settingsViewID)}
         />
@@ -147,6 +165,8 @@ export function DashboardShell() {
             <div className="lg:h-full lg:min-h-0">
               <PowerModuleView nodes={nodes} history={history} sendCommand={sendCommandWS} />
             </div>
+          ) : nodesSelected ? (
+            <NodesModuleView nodes={nodes} history={history} sendCommand={sendCommandWS} />
           ) : settingsSelected ? (
             <SettingsModuleView
               historyLimits={historyLimits}

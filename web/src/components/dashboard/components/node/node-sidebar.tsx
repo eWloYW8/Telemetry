@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ChevronsLeft, ChevronsRight, Server, Settings2, Zap } from "lucide-react";
+import { ChevronsLeft, ChevronsRight, LayoutGrid, Server, Settings2, Zap } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -15,6 +15,8 @@ type NodeSidebarProps = {
   onSelectNode: (nodeId: string) => void;
   powerSelected: boolean;
   onSelectPower: () => void;
+  nodesSelected: boolean;
+  onSelectNodes: () => void;
   settingsSelected: boolean;
   onSelectSettings: () => void;
 };
@@ -30,6 +32,8 @@ export function NodeSidebar({
   onSelectNode,
   powerSelected,
   onSelectPower,
+  nodesSelected,
+  onSelectNodes,
   settingsSelected,
   onSelectSettings,
 }: NodeSidebarProps) {
@@ -148,9 +152,24 @@ export function NodeSidebar({
 
             <button
               type="button"
+              onClick={onSelectNodes}
+              aria-label="Nodes Power"
+              title="Nodes Power"
+              className={cn(
+                "flex h-9 w-9 shrink-0 items-center justify-center rounded-md border p-0 transition-colors",
+                nodesSelected
+                  ? "border-[var(--telemetry-accent)] bg-[var(--telemetry-accent-soft)]"
+                  : "border-[var(--telemetry-border)] bg-[var(--telemetry-surface)] hover:bg-[var(--telemetry-row-hover)]",
+              )}
+            >
+              <LayoutGrid className="h-4 w-4" />
+            </button>
+
+            <button
+              type="button"
               onClick={onSelectPower}
-              aria-label="Power"
-              title="Power"
+              aria-label="Devices Power"
+              title="Devices Power"
               className={cn(
                 "flex h-9 w-9 shrink-0 items-center justify-center rounded-md border p-0 transition-colors",
                 powerSelected
@@ -260,9 +279,28 @@ export function NodeSidebar({
           <div className="border-t border-[var(--telemetry-border)] pt-2">
             <button
               type="button"
+              onClick={onSelectNodes}
+              aria-label="Nodes Power"
+              title="Nodes Power"
+              className={cn(
+                collapsed
+                  ? "mx-auto mb-1.5 flex h-9 w-9 items-center justify-center rounded-md border p-0 transition-colors"
+                  : "mb-1.5 w-full rounded-md border p-2.5 text-left text-sm font-semibold transition-colors",
+                nodesSelected
+                  ? "border-[var(--telemetry-accent)] bg-[var(--telemetry-accent-soft)]"
+                  : "border-[var(--telemetry-border)] bg-[var(--telemetry-surface)] hover:bg-[var(--telemetry-row-hover)]",
+              )}
+            >
+              <span className={cn("inline-flex items-center", collapsed ? "gap-0" : "gap-1.5")}>
+                <LayoutGrid className="h-4 w-4" />
+                {collapsed ? null : "Nodes Power"}
+              </span>
+            </button>
+            <button
+              type="button"
               onClick={onSelectPower}
-              aria-label="Power"
-              title="Power"
+              aria-label="Devices Power"
+              title="Devices Power"
               className={cn(
                 collapsed
                   ? "mx-auto mb-1.5 flex h-9 w-9 items-center justify-center rounded-md border p-0 transition-colors"
@@ -274,7 +312,7 @@ export function NodeSidebar({
             >
               <span className={cn("inline-flex items-center", collapsed ? "gap-0" : "gap-1.5")}>
                 <Zap className="h-4 w-4" />
-                {collapsed ? null : "Power"}
+                {collapsed ? null : "Devices Power"}
               </span>
             </button>
             <button
