@@ -135,6 +135,21 @@ function gpuPowerCapCommandType(vendor: GpuVendor): string {
   return vendor === "amd" ? "amdgpu_power_cap" : "gpu_power_cap";
 }
 
+// Inverse of `formatNumber(value / scale, 0)` so edit-in-place labels parse
+// the user's numeric input back to the slider's raw unit.
+function parseTextScaled(scale: number) {
+  return (text: string): number | null => {
+    const n = parseFloat(text);
+    if (!Number.isFinite(n)) return null;
+    return Math.round(n * scale);
+  };
+}
+
+const parseMhzTextToKhz = parseTextScaled(1000);
+const parseWTextToMicroW = parseTextScaled(1_000_000);
+const parseWTextToMilliW = parseTextScaled(1000);
+const parseMhzTextToMhz = parseTextScaled(1);
+
 export function nodeDeviceName(node: NodeRuntime): string {
   const basic = (node.registration?.basic ?? null) as Record<string, any> | null;
   return strField(basic, "hostname") || node.nodeId;
@@ -906,6 +921,7 @@ function BatchControlSlider({
   resetKey,
   valueFormatter,
   tickFormatter,
+  valueParser,
   enabled,
   onValueChange,
   onApply,
@@ -919,6 +935,7 @@ function BatchControlSlider({
   resetKey: string;
   valueFormatter: (value: number) => string;
   tickFormatter: (value: number) => string;
+  valueParser?: (text: string) => number | null;
   enabled: boolean;
   onValueChange?: (value: number) => void;
   onApply: (value: number) => void;
@@ -954,6 +971,7 @@ function BatchControlSlider({
         currentValue={currentValue}
         valueFormatter={valueFormatter}
         tickFormatter={tickFormatter}
+        valueParser={valueParser}
         disabled={!enabled}
         onValueChange={(v) => {
           if (!enabled) return;
@@ -986,6 +1004,7 @@ function BatchRangeControlSlider({
   resetKey,
   valueFormatter,
   tickFormatter,
+  valueParser,
   enabled,
   onRangeChange,
   onApply,
@@ -999,6 +1018,7 @@ function BatchRangeControlSlider({
   resetKey: string;
   valueFormatter: (value: number) => string;
   tickFormatter: (value: number) => string;
+  valueParser?: (text: string) => number | null;
   enabled: boolean;
   onRangeChange?: (range: [number, number]) => void;
   onApply: (range: [number, number]) => void;
@@ -1038,6 +1058,7 @@ function BatchRangeControlSlider({
         currentValue={currentValue}
         valueFormatter={valueFormatter}
         tickFormatter={tickFormatter}
+        valueParser={valueParser}
         disabled={!enabled}
         onValueChange={(v) => {
           if (!enabled) return;
@@ -1152,6 +1173,7 @@ export function CpuCoreRangeControlItem({
           currentValue={device.scalingCurrentKhz > 0 ? device.scalingCurrentKhz : null}
           valueFormatter={(value) => formatKHz(value)}
           tickFormatter={(value) => formatNumber(value / 1000, 0)}
+          valueParser={parseMhzTextToKhz}
           majorTickStep={100_000}
           disabled={Boolean(selected && forcedRange)}
           onValueChange={(v) => {
@@ -1271,6 +1293,7 @@ export function CpuUncoreRangeControlItem({
           currentValue={device.uncoreCurrentKhz > 0 ? device.uncoreCurrentKhz : null}
           valueFormatter={(value) => formatKHz(value)}
           tickFormatter={(value) => formatNumber(value / 1000, 0)}
+          valueParser={parseMhzTextToKhz}
           majorTickStep={100_000}
           disabled={Boolean(selected && forcedRange)}
           onValueChange={(v) => {
@@ -1388,6 +1411,7 @@ export function CpuPowerCapControlItem({
           currentValue={currentUsage > 0 ? currentUsage : null}
           valueFormatter={(value) => formatPowerMicroW(value)}
           tickFormatter={(value) => formatNumber(value / 1_000_000, 0)}
+          valueParser={parseWTextToMicroW}
           disabled={Boolean(selected && forcedValue !== null)}
           onValueChange={(v) => {
             const next = clamp(v[0] ?? cap, minBound, maxBound);
@@ -1533,6 +1557,7 @@ export function GpuClockRangeControlItem({
             currentValue={device.smCurrentClock > 0 ? device.smCurrentClock : null}
             valueFormatter={(value) => `${formatNumber(value)} MHz`}
             tickFormatter={(value) => formatNumber(value, 0)}
+            valueParser={parseMhzTextToMhz}
             disabled={Boolean(selected && forcedSmRange)}
             onValueChange={(v) => {
               const next: [number, number] = [
@@ -1572,6 +1597,7 @@ export function GpuClockRangeControlItem({
             currentValue={device.memCurrentClock > 0 ? device.memCurrentClock : null}
             valueFormatter={(value) => `${formatNumber(value)} MHz`}
             tickFormatter={(value) => formatNumber(value, 0)}
+            valueParser={parseMhzTextToMhz}
             disabled={Boolean(selected && forcedMemRange)}
             onValueChange={(v) => {
               const next: [number, number] = [
@@ -1676,6 +1702,7 @@ export function GpuPowerCapControlItem({
           currentValue={device.powerCurrentUsageMilliW > 0 ? device.powerCurrentUsageMilliW : null}
           valueFormatter={(value) => formatPowerMilliW(value)}
           tickFormatter={(value) => formatNumber(value / 1000, 0)}
+          valueParser={parseWTextToMilliW}
           disabled={Boolean(selected && forcedValue !== null)}
           onValueChange={(v) => {
             const next = clamp(v[0] ?? cap, device.powerMinMilliW, device.powerMaxMilliW);
@@ -2107,6 +2134,7 @@ export function PowerModuleView({ nodes, history, sendCommand }: PowerModuleView
                   resetKey={cpuCoreSelectionKey}
                   valueFormatter={(value) => formatKHz(value)}
                   tickFormatter={(value) => formatNumber(value / 1000, 0)}
+                  valueParser={parseMhzTextToKhz}
                   enabled={cpuCoreSelectedDevices.length > 0}
                   onRangeChange={(next) => setCpuCoreBatchRange(next)}
                   onApply={(nextRange) => {
@@ -2168,6 +2196,7 @@ export function PowerModuleView({ nodes, history, sendCommand }: PowerModuleView
                   resetKey={cpuUncoreSelectionKey}
                   valueFormatter={(value) => formatKHz(value)}
                   tickFormatter={(value) => formatNumber(value / 1000, 0)}
+                  valueParser={parseMhzTextToKhz}
                   enabled={cpuUncoreSelectedDevices.length > 0}
                   onRangeChange={(next) => setCpuUncoreBatchRange(next)}
                   onApply={(nextRange) => {
@@ -2230,6 +2259,7 @@ export function PowerModuleView({ nodes, history, sendCommand }: PowerModuleView
                   resetKey={cpuPackageCapSelectionKey}
                   valueFormatter={(value) => formatPowerMicroW(value)}
                   tickFormatter={(value) => formatNumber(value / 1_000_000, 0)}
+                  valueParser={parseWTextToMicroW}
                   enabled={cpuPackageCapSelectedDevices.length > 0}
                   onValueChange={(value) => setCpuPackageCapBatchValue(value)}
                   onApply={(value) => {
@@ -2290,6 +2320,7 @@ export function PowerModuleView({ nodes, history, sendCommand }: PowerModuleView
                   resetKey={cpuDramCapSelectionKey}
                   valueFormatter={(value) => formatPowerMicroW(value)}
                   tickFormatter={(value) => formatNumber(value / 1_000_000, 0)}
+                  valueParser={parseWTextToMicroW}
                   enabled={cpuDramCapSelectedDevices.length > 0}
                   onValueChange={(value) => setCpuDramCapBatchValue(value)}
                   onApply={(value) => {
@@ -2350,6 +2381,7 @@ export function PowerModuleView({ nodes, history, sendCommand }: PowerModuleView
                   resetKey={gpuClockSelectionKey}
                   valueFormatter={(value) => `${formatNumber(value)} MHz`}
                   tickFormatter={(value) => formatNumber(value, 0)}
+                  valueParser={parseMhzTextToMhz}
                   enabled={gpuClockSelectedDevices.some((device) => device.canTuneSM)}
                   onRangeChange={(next) => setGpuClockSmBatchRange(next)}
                   onApply={(nextRange) => {
@@ -2385,6 +2417,7 @@ export function PowerModuleView({ nodes, history, sendCommand }: PowerModuleView
                   resetKey={gpuClockSelectionKey}
                   valueFormatter={(value) => `${formatNumber(value)} MHz`}
                   tickFormatter={(value) => formatNumber(value, 0)}
+                  valueParser={parseMhzTextToMhz}
                   enabled={gpuClockSelectedDevices.some((device) => device.canTuneMem)}
                   onRangeChange={(next) => setGpuClockMemBatchRange(next)}
                   onApply={(nextRange) => {
@@ -2453,6 +2486,7 @@ export function PowerModuleView({ nodes, history, sendCommand }: PowerModuleView
                   resetKey={gpuPowerSelectionKey}
                   valueFormatter={(value) => formatPowerMilliW(value)}
                   tickFormatter={(value) => formatNumber(value / 1000, 0)}
+                  valueParser={parseWTextToMilliW}
                   enabled={gpuPowerSelectedDevices.length > 0}
                   onValueChange={(value) => setGpuPowerBatchValue(value)}
                   onApply={(value) => {

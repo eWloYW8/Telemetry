@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
+import type { ChangeEvent, FocusEvent, KeyboardEvent as RKeyboardEvent, PointerEvent as RPointerEvent } from "react";
 
 import { cn } from "@/lib/utils";
 import {
@@ -23,6 +24,7 @@ type RichControlSliderProps = {
   currentValue?: number | null;
   valueFormatter?: (value: number) => string;
   tickFormatter?: (value: number) => string;
+  valueParser?: (text: string) => number | null;
   majorTickStep?: number;
   minorTicksPerMajor?: number;
   showValueBadges?: boolean;
@@ -80,6 +82,7 @@ export function RichControlSlider({
   currentValue = null,
   valueFormatter,
   tickFormatter,
+  valueParser,
   majorTickStep,
   minorTicksPerMajor = 4,
   showValueBadges = true,
@@ -108,6 +111,10 @@ export function RichControlSlider({
   const upHandlerRef = useRef<((ev: PointerEvent) => void) | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [trackWidth, setTrackWidth] = useState(0);
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editingText, setEditingText] = useState<string>("");
+  const editingCommittedRef = useRef(false);
+  const editInputRef = useRef<HTMLInputElement | null>(null);
 
   const range = max > min ? max - min : 1;
   const toPercent = (raw: number) => ((clampNumber(raw, min, max) - min) / range) * 100;
@@ -121,6 +128,43 @@ export function RichControlSlider({
   const renderTick = (raw: number) => (tickFormatter ? tickFormatter(raw) : String(Math.round(raw)));
   const renderInline = (raw: number) =>
     tickFormatter ? tickFormatter(raw) : valueFormatter ? valueFormatter(raw) : String(Math.round(raw));
+
+  const parseEditInput = (text: string): number | null => {
+    const trimmed = text.trim();
+    if (trimmed === "") return null;
+    if (valueParser) {
+      const parsed = valueParser(trimmed);
+      if (parsed !== null && Number.isFinite(parsed)) return parsed;
+      return null;
+    }
+    const n = Number(trimmed);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  const beginEdit = (index: number) => {
+    if (disabled) return;
+    setEditingIndex(index);
+    setEditingText(renderInline(values[index]));
+    editingCommittedRef.current = false;
+  };
+
+  const commitEdit = () => {
+    if (editingIndex === null) return;
+    const idx = editingIndex;
+    const parsed = parseEditInput(editingText);
+    editingCommittedRef.current = true;
+    setEditingIndex(null);
+    setEditingText("");
+    if (parsed === null) return;
+    const clamped = clampNumber(parsed, min, max);
+    updateValues(idx, clamped, true, { skipChange: true });
+  };
+
+  const cancelEdit = () => {
+    editingCommittedRef.current = true;
+    setEditingIndex(null);
+    setEditingText("");
+  };
 
   const majorStep = useMemo(() => {
     if (majorTickStep && Number.isFinite(majorTickStep) && majorTickStep > 0) return majorTickStep;
@@ -181,7 +225,12 @@ export function RichControlSlider({
     return false;
   })();
 
-  const updateValues = (thumbIndex: number, rawValue: number, commit: boolean) => {
+  const updateValues = (
+    thumbIndex: number,
+    rawValue: number,
+    commit: boolean,
+    options?: { skipChange?: boolean },
+  ) => {
     const next = values.slice();
     next[thumbIndex] = rawValue;
 
@@ -192,7 +241,7 @@ export function RichControlSlider({
 
     const normalized = normalizeValues(next, count, min, max, step);
     if (!isControlled) setInnerValues(normalized);
-    onValueChange?.(normalized);
+    if (!options?.skipChange) onValueChange?.(normalized);
     if (commit) onValueCommit?.(normalized);
   };
 
@@ -547,6 +596,7 @@ export function RichControlSlider({
             )}
             style={{ left: `${thumbDisplayPercents[index] ?? thumbTargetPercents[index] ?? toPercent(entry)}%`, top: "50%" }}
             onPointerDown={(ev) => {
+              if (editingIndex === index) return;
               ev.preventDefault();
               ev.stopPropagation();
               startDragging(index, ev.clientX);
@@ -554,15 +604,59 @@ export function RichControlSlider({
             onKeyDown={(ev) => onThumbKeyDown(index, ev)}
           >
             {showBadges ? (
-              <span
-                className={cn(
-                  "absolute -bottom-5 left-1/2 -translate-x-1/2 whitespace-nowrap text-xs font-semibold transition-[left] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)]",
-                  thumbTextTone(index),
-                )}
-                style={{ left: `calc(50% + ${thumbLabelOffsetByIndex.get(index) ?? 0}px)` }}
-              >
-                {renderInline(entry)}
-              </span>
+              editingIndex === index ? (
+                <input
+                  ref={editInputRef}
+                  type="text"
+                  inputMode="decimal"
+                  value={editingText}
+                  autoFocus
+                  disabled={disabled}
+                  className={cn(
+                    "absolute -bottom-5 left-1/2 -translate-x-1/2 w-16 rounded border border-[var(--telemetry-border)] bg-[var(--telemetry-surface)] px-1 py-0 text-center text-xs font-semibold outline-none focus:border-[var(--telemetry-accent)]",
+                    thumbTextTone(index),
+                  )}
+                  style={{ left: `calc(50% + ${thumbLabelOffsetByIndex.get(index) ?? 0}px)` }}
+                  onPointerDown={(ev: RPointerEvent<HTMLInputElement>) => ev.stopPropagation()}
+                  onClick={(ev) => ev.stopPropagation()}
+                  onChange={(ev: ChangeEvent<HTMLInputElement>) => setEditingText(ev.target.value)}
+                  onBlur={(_ev: FocusEvent<HTMLInputElement>) => {
+                    if (editingCommittedRef.current) return;
+                    commitEdit();
+                  }}
+                  onKeyDown={(ev: RKeyboardEvent<HTMLInputElement>) => {
+                    if (ev.key === "Enter") {
+                      ev.preventDefault();
+                      commitEdit();
+                    } else if (ev.key === "Escape") {
+                      ev.preventDefault();
+                      cancelEdit();
+                    }
+                    ev.stopPropagation();
+                  }}
+                />
+              ) : (
+                <span
+                  className={cn(
+                    "absolute -bottom-5 left-1/2 -translate-x-1/2 whitespace-nowrap text-xs font-semibold cursor-text transition-[left] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)]",
+                    thumbTextTone(index),
+                    disabled && "cursor-not-allowed",
+                  )}
+                  style={{ left: `calc(50% + ${thumbLabelOffsetByIndex.get(index) ?? 0}px)` }}
+                  onPointerDown={(ev) => {
+                    if (disabled) return;
+                    ev.stopPropagation();
+                  }}
+                  onClick={(ev) => {
+                    if (disabled) return;
+                    ev.stopPropagation();
+                    beginEdit(index);
+                  }}
+                  title={disabled ? undefined : "Click to edit"}
+                >
+                  {renderInline(entry)}
+                </span>
+              )
             ) : null}
           </button>
         );
