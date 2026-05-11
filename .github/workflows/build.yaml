@@ -95,6 +95,7 @@ jobs:
             "goos=linux goarch=amd64 goamd64=v3 output=amd64"
             "goos=linux goarch=arm64 output=arm64"
             "goos=linux goarch=riscv64 output=riscv64"
+            "goos=darwin goarch=arm64 output=arm64"
           )
 
           build_one() {
