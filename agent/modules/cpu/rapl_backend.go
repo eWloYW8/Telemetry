@@ -200,9 +200,7 @@ func newAMDRAPLBackend(mappings []CoreMapping) (*amdRAPLBackend, error) {
 }
 
 func discoverAMDHSMPHwmonSensors() []amdHSMPSensor {
-	const root = "/sys/devices/platform/amd_hsmp/hwmon"
-
-	hwmons, _ := filepath.Glob(filepath.Join(root, "hwmon*"))
+	hwmons, _ := filepath.Glob("/sys/class/hwmon/hwmon*")
 	sort.Slice(hwmons, func(i, j int) bool {
 		left := extractPackageID(filepath.Base(hwmons[i]))
 		right := extractPackageID(filepath.Base(hwmons[j]))
